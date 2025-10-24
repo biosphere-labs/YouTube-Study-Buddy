@@ -1,209 +1,167 @@
 # YouTube Study Buddy
 
-Learning from educational YouTube videos and want to maximize retention and build meaningful connections? **YT Study Buddy** transforms any YouTube video into structured study notes with intelligent cross-referencing that builds your personal knowledge graph over time, turning scattered video content into an interconnected learning system.
+Transform YouTube educational videos into structured study notes with AI-powered cross-referencing for **Obsidian** knowledge bases.
 
-## 🧠 The Science: Active Learning vs Passive Watching
+## 🎯 What It Does
 
-**Traditional passive note-taking** often leads to the "illusion of competence" – where learners feel they understand content simply because they've transcribed it. YT Study Buddy implements research-backed learning principles:
+- **AI-Generated Study Notes** – Claude AI creates comprehensive notes from YouTube video transcripts
+- **Learning Assessments** – Auto-generated quiz questions to test understanding
+- **Obsidian Integration** – Creates `[[wiki-style]]` links between related notes
+- **Knowledge Graph** – Automatically finds connections across all your study notes
+- **Auto-Categorization** – ML-based subject detection organizes notes by topic
+- **PDF Export** – Export notes with Obsidian-compatible styling
 
-- **Dual Coding Theory** – Combines text with visual spatial organization for stronger memory formation
-- **Generation Effect** – Assessment questions force active answer generation, improving retention
-- **Desirable Difficulties** – "One-up" challenges introduce productive struggle beyond the presented material
-- **Elaborative Interrogation** – Gap analysis questions reveal what your brain filtered out
-- **Spaced Retrieval Practice** – Separation of note generation from video watching enables spaced review
+## 🚀 Quick Start
 
-**Result:** Instead of passive consumption, you get an active learning system with notes AND assessment questions that test understanding beyond surface-level recall.
+### Prerequisites
 
-## 💰 Free vs Paid Alternatives
+- Docker and Docker Compose
+- Claude API key ([get free key](https://console.anthropic.com/))
+- Obsidian (optional, for viewing the linked knowledge base)
 
-**Paid ($10-50+/month):** NoteGPT, Notta, Eightify, Maestra – all require subscriptions for full features
-
-**Free (Limited):** Basic transcripts, no AI analysis, no cross-referencing, no assessments
-
-**YT Study Buddy:** Completely free with AI-powered notes, learning assessments, auto-categorization, and knowledge graph building. No subscriptions, no limits.
-
-## Quick Start
-
-### Using Docker (Recommended)
+### Installation
 
 ```bash
-# 1. Set your Claude API key in .env
-echo "CLAUDE_API_KEY=your_key_here" > .env
+# 1. Clone repository
+git clone https://github.com/fluidnotions/YouTube-Study-Buddy.git
+cd YouTube-Study-Buddy
 
-# 2. Start services
+# 2. Create .env file with your API key
+echo "CLAUDE_API_KEY=your_key_here" > .env
+echo "USER_ID=$(id -u)" >> .env
+echo "GROUP_ID=$(id -g)" >> .env
+
+# 3. Start the app
 docker-compose up -d
 
-# 3. Open browser
+# 4. Open Streamlit UI
 open http://localhost:8501
 ```
 
-### Quick Start - Streamlit Web Interface
+That's it! The Streamlit interface will guide you through processing videos.
+
+### Managing the App
 
 ```bash
-# Simple way - use the startup script
-./start_streamlit.sh
+# View logs
+docker logs -f youtube-study-buddy
 
-# Or manually with uv
-unset VIRTUAL_ENV  # Clear any conflicting venv
-uv run python -m streamlit run streamlit_app.py
+# Stop
+docker-compose down
+
+# Restart
+docker-compose restart
 ```
 
-### Using CLI (Local Development)
+## 📚 Obsidian Integration
+
+### Local Use (Recommended)
+
+Mount your Obsidian vault's notes directory to enable [[wiki-links]] between notes:
 
 ```bash
-# Install dependencies first
-uv sync
-
-# Sequential processing
-uv run yt-study-buddy https://youtu.be/VIDEO_ID
-
-# Parallel processing (3 workers)
-uv run yt-study-buddy --parallel --workers 3 \
-  https://youtu.be/VIDEO1 \
-  https://youtu.be/VIDEO2 \
-  https://youtu.be/VIDEO3
-
-# View processing logs
-cat notes/processing_log.json | jq '.'
+# Edit docker-compose.yml
+volumes:
+  - /path/to/your/obsidian/vault:/app/notes  # Replace with your path
+  - tracker-data:/app/tracker
 ```
 
-## Features
+Then process videos in the Streamlit UI with:
+- **Subject**: Specify a subject (creates `/notes/Subject/` folder)
+- **Global cross-referencing**: ✓ Enable to link across all subjects
 
-### Core Capabilities
-- 🤖 **AI-Powered Notes** - Claude Sonnet 4.5 generates comprehensive study materials
-- 📝 **Learning Assessments** - Automatic quiz generation with gap analysis
-- 🔄 **Automatic Retry** - 15-minute retry system for failed jobs
-- 🏷️ **Auto-Categorization** - ML-based subject detection
-- 📊 **Knowledge Graph** - Cross-reference related concepts
-- 📄 **PDF Export** - Multiple themes (Obsidian, Academic, Minimal)
+The linker will create `[[links]]` to related notes in your vault.
 
-## Docker Setup
+### How Cross-Referencing Works
 
-### Volumes
+**Global Context** (default):
+- Searches across ALL subjects for related concepts
+- Creates links like: "This concept relates to [[Neural Networks]] (AI subject)"
 
-The docker-compose configuration uses volumes for data persistence:
+**Subject-Only Context**:
+- Only links within the specified subject
+- Use `--subject-only` flag or disable "Global" in Streamlit
 
-1. **`./notes`** (bind mount) - Study notes output
-   - Appears on host at `./notes/`
-   - Organized by subject
-   - Contains markdown files and PDFs
-
-### Managing Data
-
+Example with CLI:
 ```bash
-# View processing log
-cat notes/processing_log.json | jq '.'
+# Global cross-referencing (links across all subjects)
+docker exec youtube-study-buddy uv run yt-study-buddy --subject "AI" https://youtube.com/watch?v=xyz
 
-# Backup notes
-tar czf notes-backup.tar.gz notes/
-
-# Restore notes
-tar xzf notes-backup.tar.gz
+# Subject-only (links within AI subject only)
+docker exec youtube-study-buddy uv run yt-study-buddy --subject "AI" --subject-only https://youtube.com/watch?v=xyz
 ```
 
-## Retry System
+### Viewing in Obsidian
 
-Failed jobs automatically retry every 15 minutes.
+1. Point Obsidian to your notes directory
+2. Notes appear as markdown files with `[[wiki-links]]`
+3. Use Obsidian's graph view to visualize connections
+4. Click links to navigate between related concepts
 
-### Usage
+## ⚙️ Configuration
 
-```bash
-# Check retry status
-python retry_failed_jobs.py --status
+### Processing Options (Streamlit UI)
 
-# Retry all eligible jobs once
-python retry_failed_jobs.py
+- **Subject** – Organize notes by topic (creates subdirectories)
+- **Global cross-referencing** – Find links across all subjects vs. subject-only
+- **Generate Assessments** – Create quiz questions
+- **Auto-categorize** – ML detects subject when not specified
+- **Export PDF** – Generate PDFs with Obsidian styling
 
-# Continuous monitoring (recommended)
-python retry_failed_jobs.py --watch
-
-# Custom interval (30 minutes)
-python retry_failed_jobs.py --watch --interval 30
-```
-
-## File Organization
+### File Organization
 
 ```
 notes/
-├── processing_log.json           # Complete job history
 ├── AI/
-│   ├── video_title_1.md
-│   ├── Assessment_video_title_1.md
+│   ├── Neural_Networks_Intro.md          # Study notes with [[links]]
+│   ├── Assessment_Neural_Networks_Intro.md
 │   └── pdfs/
-│       └── video_title_1.pdf
-└── Programming/
-    └── ...
+│       └── Neural_Networks_Intro.pdf
+├── Machine_Learning/
+│   └── ...
+└── processing_log.json                    # Job history
 ```
 
-## Processing Log
+## 🎓 Learning Features
 
-Every job (success/failure) logged to `notes/processing_log.json`:
+### Study Notes Include:
+- **Core Concepts** – Key ideas extracted from transcript
+- **Definitions** – Technical terms explained
+- **Key Points** – Important takeaways
+- **Cross-References** – `[[Links]]` to related notes
+- **Source** – YouTube URL and video metadata
 
-```json
-{
-  "video_id": "abc123",
-  "worker_id": 2,
-  "success": true,
-  "processing_duration": 58.8,
-  "retry_count": 0,
-  "timings": {
-    "fetch_transcript": 5.2,
-    "generate_notes": 20.3,
-    "generate_assessment": 28.1,
-    "write_files": 0.7
-  },
-  "error": null
-}
-```
+### Assessment Questions:
+- **Comprehension** – Test understanding of concepts
+- **Gap Analysis** – Identify what you might have missed
+- **One-Up Questions** – Go beyond the video content
 
-### Query Examples
+## 🌐 For Streamlit Cloud Deployment
 
-```bash
-# Failed jobs only
-cat notes/processing_log.json | jq '.[] | select(.success == false)'
+The session-based deployment (from `feat/streamlit-deployment` branch) is designed for public hosting where:
+- Users provide their own Claude API key
+- Each session gets isolated storage
+- Users download notes as ZIP when done
+- No Obsidian integration (no shared vault)
 
-# Average processing time
-cat notes/processing_log.json | jq '[.[] | select(.success) | .processing_duration] | add / length'
-```
+For personal use with Obsidian, use the Docker setup described above.
 
-## Web Interface
+## 🔧 Technical Details
 
-The Streamlit UI shows:
+### Architecture
+- **tor-proxy** container: Bypasses YouTube rate limiting
+- **app** container: Streamlit UI + Python processing
+- **Tor circuit rotation**: Automatic IP rotation on retries
 
-- **Process Videos** - Batch processing with playlist extraction
-- **Results** - Knowledge graph and cross-references
-- **Logs** - Processing history with failure details
-  - Human-readable timestamps ("2 hours ago")
-  - Failure reasons
-  - Retry count
+### Why Tor?
+YouTube blocks repeated transcript requests from the same IP. Tor routing solves this for batch processing.
 
-## Performance
+## 📝 License
 
-### Parallel Processing
-- **3 Workers:** ~54% faster than sequential
-- **Job Logging:** Complete audit trail
+GNU Affero General Public License v3.0 or later
 
-### Retry System Impact
-- **Without Retry:** 60% failure rate (temporary blocks)
-- **With Retry:** ~90% eventual success rate
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation.
 
-## Development
+---
 
-```bash
-# Install dependencies
-uv sync
-
-# Run tests
-uv run pytest
-
-# Development mode with source mounting
-docker-compose -f docker-compose.dev.yml up --build
-```
-
-## License
-
-This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-
-This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+**⭐ If you find this useful, please star the repo!** It helps others discover the project.
