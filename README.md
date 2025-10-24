@@ -27,7 +27,7 @@ Learning from educational YouTube videos and want to maximize retention and buil
 ### Using Docker (Recommended)
 
 ```bash
-# 1. Set your Claude API key in .env
+# 1. Set your Claude API key in .env (optional - can enter in UI)
 echo "CLAUDE_API_KEY=your_key_here" > .env
 
 # 2. Start services
@@ -35,9 +35,11 @@ docker-compose up -d
 
 # 3. Open browser
 open http://localhost:8501
+
+# If you didn't set the API key in .env, enter it in the sidebar
 ```
 
-### Quick Start - Streamlit Web Interface
+### Quick Start - Streamlit Web Interface (Local)
 
 ```bash
 # Simple way - use the startup script
@@ -46,7 +48,19 @@ open http://localhost:8501
 # Or manually with uv
 unset VIRTUAL_ENV  # Clear any conflicting venv
 uv run python -m streamlit run streamlit_app.py
+
+# Access at http://localhost:8501
+# Enter your Claude API key in the sidebar if not set in environment
 ```
+
+### Deployment to Streamlit Cloud
+
+1. Fork this repository
+2. Connect to Streamlit Cloud (https://streamlit.io/cloud)
+3. Deploy the app
+4. Users enter their Claude API key in the sidebar
+5. Each session gets a unique folder
+6. Users download their notes as ZIP when done
 
 ### Using CLI (Local Development)
 
@@ -83,22 +97,26 @@ cat notes/processing_log.json | jq '.'
 
 The docker-compose configuration uses volumes for data persistence:
 
-1. **`./notes`** (bind mount) - Study notes output
-   - Appears on host at `./notes/`
-   - Organized by subject
+1. **`./sessions`** (bind mount) - Session-based study notes output
+   - Appears on host at `./sessions/`
+   - Each session has unique folder: `session_<id>/`
+   - Organized by subject within each session
    - Contains markdown files and PDFs
 
 ### Managing Data
 
 ```bash
-# View processing log
-cat notes/processing_log.json | jq '.'
+# View all sessions
+ls -la sessions/
 
-# Backup notes
-tar czf notes-backup.tar.gz notes/
+# View specific session
+cat sessions/session_abc12345/processing_log.json | jq '.'
 
-# Restore notes
-tar xzf notes-backup.tar.gz
+# Backup all sessions
+tar czf sessions-backup.tar.gz sessions/
+
+# Clean up old sessions (manual)
+rm -rf sessions/session_old123/
 ```
 
 ## Retry System
@@ -123,6 +141,24 @@ python retry_failed_jobs.py --watch --interval 30
 
 ## File Organization
 
+### Session-based (Web UI)
+```
+sessions/
+├── session_abc12345/
+│   ├── processing_log.json      # Session job history
+│   ├── exit_nodes.json          # Tor exit node tracker
+│   ├── AI/
+│   │   ├── video_title_1.md
+│   │   ├── Assessment_video_title_1.md
+│   │   └── pdfs/
+│   │       └── video_title_1.pdf
+│   └── Programming/
+│       └── ...
+└── session_xyz67890/
+    └── ...
+```
+
+### Traditional (CLI)
 ```
 notes/
 ├── processing_log.json           # Complete job history
@@ -168,14 +204,20 @@ cat notes/processing_log.json | jq '[.[] | select(.success) | .processing_durati
 
 ## Web Interface
 
-The Streamlit UI shows:
+The Streamlit UI provides:
 
+- **API Key Input** - Enter Claude API key in sidebar (if not in environment)
+- **Session Management** - Unique session ID for each user
 - **Process Videos** - Batch processing with playlist extraction
-- **Results** - Knowledge graph and cross-references
-- **Logs** - Processing history with failure details
-  - Human-readable timestamps ("2 hours ago")
-  - Failure reasons
-  - Retry count
+- **ZIP Download** - Download all notes and PDFs when complete
+- **Real-time Progress** - Watch processing status live
+
+### Key Features for Public Deployment
+
+- ✅ No API key needed in environment (users provide their own)
+- ✅ Session isolation (each user gets unique folder)
+- ✅ ZIP export (users download complete session)
+- ✅ Ready for Streamlit Cloud deployment
 
 ## Performance
 
