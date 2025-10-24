@@ -17,7 +17,7 @@ except ImportError:
 class ObsidianLinker:
     """Creates Obsidian-style [[links]] between related study notes."""
 
-    def __init__(self, base_dir="Study notes", subject=None, global_context=True, min_similarity=85):
+    def __init__(self, base_dir="Study notes", subject=None, global_context=True, min_similarity=70):
         self.base_dir = base_dir
         self.subject = subject
         self.global_context = global_context
@@ -96,12 +96,20 @@ class ObsidianLinker:
 
         potential_links = []
 
-        # Split content into sentences and phrases for analysis
-        sentences = re.split(r'[.!?]+', content)
+        # Remove headers before processing (they shouldn't be linked)
+        content_without_headers = re.sub(r'^#+\s+.+$', '', content, flags=re.MULTILINE)
+
+        # Normalize newlines and whitespace
+        # This prevents malformed phrases like "Overview\nModern"
+        normalized_content = re.sub(r'\n+', ' ', content_without_headers)
+        normalized_content = re.sub(r'\s+', ' ', normalized_content)  # Normalize whitespace
+
+        # Split content into sentences
+        sentences = re.split(r'[.!?]+', normalized_content)
 
         for sentence in sentences:
-            # Skip if sentence is too short or is already a header/link
-            if len(sentence.strip()) < 10 or sentence.strip().startswith('#') or '[[' in sentence:
+            # Skip if sentence is too short or already has links
+            if len(sentence.strip()) < 10 or '[[' in sentence:
                 continue
 
             # Extract potential phrases (noun phrases, technical terms, etc.)
@@ -148,9 +156,18 @@ class ObsidianLinker:
         """Extract potential linkable phrases from a sentence."""
         phrases = []
 
+        # Skip headers and empty sentences
+        if sentence.startswith('#') or len(sentence.strip()) < 5:
+            return []
+
         # Look for multi-word capitalized phrases (proper nouns, technical terms)
-        capitalized_phrases = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', sentence)
-        phrases.extend([p for p in capitalized_phrases if len(p) > 3])
+        # Extract sequences of 2-4 capitalized words
+        capitalized_phrases = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b', sentence)
+        phrases.extend([p for p in capitalized_phrases if len(p) > 5])
+
+        # Also extract individual capitalized words (2+ words minimum for matching)
+        single_caps = re.findall(r'\b[A-Z][a-z]{2,}\b', sentence)
+        phrases.extend(single_caps)
 
         # Look for technical terms and concepts (words with specific patterns)
         technical_terms = re.findall(r'\b[a-z]+(?:[A-Z][a-z]*)+\b', sentence)  # camelCase terms
