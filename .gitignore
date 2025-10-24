@@ -13,6 +13,8 @@ urls.txt
 test_urls.txt
 /autofix.log
 notes/
+sessions/
+!sessions/README.md
 debug_logs/
 data/
 CLAUDE.md

@@ -10,6 +10,9 @@ import sys
 import time
 import json
 import pandas as pd
+import uuid
+import shutil
+import zipfile
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -35,6 +38,10 @@ def initialize_session_state():
         st.session_state.processing = False
     if 'show_quick_start' not in st.session_state:
         st.session_state.show_quick_start = True
+    if 'session_id' not in st.session_state:
+        st.session_state.session_id = str(uuid.uuid4())[:8]
+    if 'api_key' not in st.session_state:
+        st.session_state.api_key = os.getenv('CLAUDE_API_KEY') or os.getenv('ANTHROPIC_API_KEY') or ""
 
 
 def create_processor(subject, global_context, generate_assessments=True, auto_categorize=True, base_dir="notes", parallel=False, max_workers=3, export_pdf=False, pdf_theme='obsidian'):
@@ -397,6 +404,38 @@ def display_exit_node_log(base_dir="notes"):
             st.dataframe(df_available, use_container_width=True, hide_index=True)
 
 
+def create_session_zip(session_dir):
+    """
+    Create a zip file containing all notes and PDFs from a session directory.
+
+    Args:
+        session_dir: Path to the session directory
+
+    Returns:
+        Path to the created zip file or None if error
+    """
+    try:
+        session_path = Path(session_dir)
+        if not session_path.exists():
+            return None
+
+        # Create zip file in temp location
+        zip_path = session_path.parent / f"{session_path.name}.zip"
+
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            # Walk through all files in session directory
+            for file_path in session_path.rglob('*'):
+                if file_path.is_file():
+                    # Add file to zip with relative path
+                    arcname = file_path.relative_to(session_path.parent)
+                    zipf.write(file_path, arcname)
+
+        return zip_path
+    except Exception as e:
+        st.error(f"Error creating zip file: {e}")
+        return None
+
+
 def validate_urls(url_text):
     """
     Validate URLs and return list of valid URLs with error message if any invalid.
@@ -515,27 +554,67 @@ def main():
 
     # Sidebar - Status and Settings
     with st.sidebar:
-        st.header("🔑 System Status")
+        st.header("🔑 API Configuration")
 
-        # API key check
-        api_key = os.getenv('CLAUDE_API_KEY') or os.getenv('ANTHROPIC_API_KEY')
-        if api_key:
-            st.success("✅ Claude API key found")
+        # API key input with environment fallback
+        env_api_key = os.getenv('CLAUDE_API_KEY') or os.getenv('ANTHROPIC_API_KEY')
+
+        if env_api_key:
+            st.success("✅ Claude API key found in environment")
+            api_key = env_api_key
+            st.session_state.api_key = env_api_key
         else:
-            st.error("❌ Claude API key not found")
-            st.info("Set `CLAUDE_API_KEY` or `ANTHROPIC_API_KEY` environment variable")
+            st.warning("⚠️ No API key in environment")
+            api_key_input = st.text_input(
+                "Enter Claude API Key",
+                type="password",
+                value=st.session_state.api_key,
+                help="Enter your Claude API key (starts with 'sk-ant-')",
+                disabled=st.session_state.processing
+            )
+
+            if api_key_input:
+                st.session_state.api_key = api_key_input
+                # Set in environment for this session
+                os.environ['CLAUDE_API_KEY'] = api_key_input
+                api_key = api_key_input
+                st.success("✅ API key entered")
+            else:
+                api_key = None
+                st.info("👆 Enter your API key above to get started")
 
         st.divider()
 
-        # Output location (fixed for Docker)
-        st.header("📁 Output Location")
+        # Output location - session-based
+        st.header("📁 Session Info")
 
-        # Fixed output directory
-        output_base_dir = "notes"
+        # Session-based output directory
+        output_base_dir = f"sessions/session_{st.session_state.session_id}"
 
-        st.info("📂 Notes saved to: `./notes/`")
-        st.caption("💡 **Docker users**: Files appear in `./notes/` on your host machine")
-        st.caption("💡 **CLI users**: Use `--base-dir` flag for custom paths")
+        st.info(f"📂 Session ID: `{st.session_state.session_id}`")
+        st.caption(f"💾 Notes saved to: `{output_base_dir}/`")
+
+        # Download button for completed session
+        session_path = Path(output_base_dir)
+        if session_path.exists() and any(session_path.rglob('*.md')):
+            st.subheader("📦 Download")
+            if st.button("📥 Download All Files (ZIP)", use_container_width=True):
+                with st.spinner("Creating zip file..."):
+                    zip_path = create_session_zip(output_base_dir)
+                    if zip_path:
+                        with open(zip_path, 'rb') as f:
+                            st.download_button(
+                                label="💾 Download ZIP",
+                                data=f,
+                                file_name=f"study_notes_{st.session_state.session_id}.zip",
+                                mime="application/zip",
+                                use_container_width=True
+                            )
+                        # Clean up temp zip file
+                        try:
+                            zip_path.unlink()
+                        except:
+                            pass
 
         st.divider()
 

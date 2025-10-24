@@ -13,7 +13,7 @@ services:
       - TOR_HOST=tor-proxy
       - TOR_PORT=9050
     volumes:
-      - ./notes:/app/notes
+      - ./sessions:/app/sessions
       - tracker-data:/app/tracker
     user: "${USER_ID:-1000}:${GROUP_ID:-1000}"
     depends_on:
@@ -59,6 +59,7 @@ volumes:
 # - dperson/torproxy has proven configuration
 #
 # Volumes:
-# - ./notes: Study notes output (bind mount to host)
+# - ./sessions: Session-based study notes output (bind mount to host)
+#   Each user session gets a unique folder: sessions/session_<id>/
 # - tracker-data: Exit node tracker persistence (named volume)
 # - tor-data: Tor configuration and state (named volume)
