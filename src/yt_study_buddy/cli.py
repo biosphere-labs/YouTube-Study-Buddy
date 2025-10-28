@@ -55,18 +55,8 @@ class YouTubeStudyNotes:
         self.notes_generator = StudyNotesGenerator()
         self.obsidian_linker = ObsidianLinker(base_dir, subject, global_context)
 
-        # Initialize Tor coordinator for parallel processing
-        # Uses SingleTorCoordinator since we have only ONE Tor daemon
-        if parallel:
-            from .tor_transcript_fetcher import SingleTorCoordinator
-            self.tor_coordinator = SingleTorCoordinator(
-                tor_host='127.0.0.1',
-                tor_port=9050,
-                tor_control_port=9051,
-                cooldown_hours=1.0
-            )
-        else:
-            self.tor_coordinator = None
+        # Tor exit node manager (single facade for all Tor operations)
+        self.tor_manager = None  # Will be initialized when processing URLs
 
         # Initialize new components
         self.auto_categorizer = AutoCategorizer() if self.auto_categorize else None
@@ -121,7 +111,7 @@ class YouTubeStudyNotes:
 
         return urls
 
-    def process_single_url(self, url, worker_processor=None, worker_id=None, tor_fetcher=None):
+    def process_single_url(self, url, worker_processor=None, worker_id=None):
         """
         Process a single YouTube URL using stateless pipeline.
 
@@ -130,7 +120,6 @@ class YouTubeStudyNotes:
             worker_processor: Optional VideoProcessor instance for this worker.
                             If None, uses self.video_processor (shared instance).
             worker_id: Optional worker ID for logging/debugging
-            tor_fetcher: Optional TorTranscriptFetcher from pool (for parallel mode)
 
         Returns:
             ProcessingResult with outcome
@@ -138,10 +127,17 @@ class YouTubeStudyNotes:
         # Use per-worker processor if provided, otherwise use shared instance
         processor = worker_processor if worker_processor else self.video_processor
 
-        # If tor_fetcher provided from pool, inject it into the processor
-        if tor_fetcher and hasattr(processor, 'provider'):
+        # If parallel mode, get Tor fetcher from manager
+        if self.tor_manager and worker_id is not None and hasattr(processor, 'provider'):
             if hasattr(processor.provider, 'tor_fetcher'):
-                processor.provider.tor_fetcher = tor_fetcher
+                try:
+                    # Get fetcher configured for this worker
+                    tor_fetcher = self.tor_manager.get_fetcher_for_worker(worker_id)
+                    processor.provider.tor_fetcher = tor_fetcher
+
+                except Exception as e:
+                    logger.warning(f"  Worker {worker_id} failed to get Tor fetcher: {e}")
+                    # Fall back to default behavior
 
         # Extract video ID
         video_id = processor.get_video_id(url)
@@ -281,30 +277,44 @@ class YouTubeStudyNotes:
             logger.info(f"Subject: {self.subject}")
             logger.info(f"Cross-reference scope: {'Subject-only' if not self.global_context else 'Global'}")
 
-        # UNIFIED PROCESSING PATH: Single code path for both sequential and parallel modes
-        if self.parallel and self.tor_coordinator:
-            # Parallel mode with Tor coordinator - synchronized access to single Tor daemon
-            def process_with_coordinator_worker(url, worker_id):
-                """Process URL using Tor fetcher from coordinator."""
-                with self.tor_coordinator.acquire(worker_id=worker_id) as tor_fetcher:
-                    return self.process_single_url(url, worker_id=worker_id, tor_fetcher=tor_fetcher)
+        # Initialize Tor exit node manager
+        if self.parallel:
+            try:
+                from .tor_exit_manager import TorExitNodeManager
 
-            results = self.parallel_processor.process_videos_parallel(
-                urls,
-                process_with_coordinator_worker,
-                worker_factory=None  # Don't create per-worker processors
-            )
+                logger.info("Initializing Tor exit node manager...")
+
+                # Auto-detect and initialize
+                self.tor_manager = TorExitNodeManager()
+
+                stats = self.tor_manager.get_stats()
+                tor_count = stats['tor_instances']
+
+                if tor_count == 1:
+                    logger.warning("⚠️  Only 1 Tor instance detected. For true parallel processing:")
+                    logger.info("     docker-compose -f docker-compose.yml -f docker-compose.parallel.yml up -d")
+                    logger.info(f"  With 1 instance, {self.max_workers} workers will share the same circuit")
+                else:
+                    logger.success(f"✓ Detected {tor_count} Tor instances - true parallel processing enabled")
+
+            except Exception as e:
+                logger.error(f"Failed to initialize Tor manager: {e}")
+                logger.warning("Continuing with default Tor configuration")
+                self.tor_manager = None
         else:
-            # Sequential mode or parallel without pool - use worker factory
-            def video_processor_factory():
-                """Create a new VideoProcessor instance for a worker thread."""
-                return VideoProcessor("tor")
+            self.tor_manager = None
 
-            results = self.parallel_processor.process_videos_parallel(
-                urls,
-                self.process_single_url,
-                worker_factory=video_processor_factory
-            )
+        # UNIFIED PROCESSING PATH: Single code path for both sequential and parallel modes
+        # Create worker factory for per-worker VideoProcessor instances
+        def video_processor_factory():
+            """Create a new VideoProcessor instance for a worker thread."""
+            return VideoProcessor("tor")
+
+        results = self.parallel_processor.process_videos_parallel(
+            urls,
+            self.process_single_url,
+            worker_factory=video_processor_factory
+        )
 
         # Collect metrics
         for result in results:

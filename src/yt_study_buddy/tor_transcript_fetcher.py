@@ -2,14 +2,14 @@
 Tor proxy-based transcript fetcher for YouTube videos.
 
 Bypasses IP blocks by routing requests through Tor network.
+
+For parallel processing, use TorExitNodeManager (tor_exit_manager.py) which
+manages multiple Tor daemon instances and assigns workers to them.
 """
 import random
 import re
 import socket
 import time
-import threading
-from collections import deque
-from contextlib import contextmanager
 from typing import Optional, List, Dict, Any
 
 import requests
@@ -21,476 +21,8 @@ from youtube_transcript_api.proxies import GenericProxyConfig
 
 from .ytdlp_fallback import YtDlpFallback
 from .debug_logger import get_logger
-from .exit_node_tracker import get_tracker
 from .daily_exit_tracker import get_daily_tracker
 from .error_classifier import simplify_error
-
-
-class SingleTorCoordinator:
-    """
-    Coordinates access to a single Tor daemon across multiple workers.
-
-    Unlike TorExitNodePool which requires multiple Tor daemons (one per worker),
-    this coordinator synchronizes access to a SINGLE Tor instance, ensuring:
-    1. Only one worker rotates circuits at a time (no race conditions)
-    2. Workers wait for circuit rotation to complete before proceeding
-    3. Unique exit IPs are tracked to avoid YouTube blocking
-
-    This is the appropriate choice when you have only ONE Tor daemon running.
-    """
-
-    def __init__(
-        self,
-        tor_host: str = '127.0.0.1',
-        tor_port: int = 9050,
-        tor_control_port: int = 9051,
-        tor_control_password: Optional[str] = None,
-        cooldown_hours: float = 1.0
-    ):
-        """
-        Initialize coordinator for single Tor instance.
-
-        Args:
-            tor_host: Tor SOCKS proxy host
-            tor_port: Tor SOCKS port
-            tor_control_port: Tor control port
-            tor_control_password: Control port password
-            cooldown_hours: Hours to track used IPs
-        """
-        self.tor_host = tor_host
-        self.tor_port = tor_port
-        self.tor_control_port = tor_control_port
-        self.tor_control_password = tor_control_password
-
-        # Single lock for all Tor operations (rotation, fetching, etc.)
-        self._tor_lock = threading.Lock()
-
-        # Track the currently active exit IP
-        self._current_exit_ip: Optional[str] = None
-        self._exit_ip_lock = threading.Lock()
-
-        # Get persistent tracker for cooldown enforcement
-        self._tracker = get_tracker(cooldown_hours=cooldown_hours)
-
-        logger.info(f"Initialized SingleTorCoordinator")
-        logger.info(f"  Single Tor daemon: {tor_host}:{tor_port}")
-        logger.info(f"  Control port: {tor_control_port}")
-
-        tracker_stats = self._tracker.get_stats()
-        logger.info(f"  Exit node tracker: {tracker_stats['in_cooldown']} IPs in cooldown, "
-                    f"{tracker_stats['available']} available")
-
-    @contextmanager
-    def acquire(self, worker_id: Optional[int] = None):
-        """
-        Acquire shared access to the Tor connection (context manager).
-
-        The Tor connection itself is shared, but this ensures proper synchronization
-        for circuit rotation and IP tracking.
-
-        Args:
-            worker_id: Optional worker ID for logging
-
-        Yields:
-            TorTranscriptFetcher instance configured with shared Tor settings
-        """
-        worker_label = f"worker-{worker_id}" if worker_id is not None else "unknown"
-
-        logger.info(f"  {worker_label} acquiring Tor connection (shared mode)")
-
-        # Create fetcher instance for this worker
-        fetcher = TorTranscriptFetcher(
-            tor_host=self.tor_host,
-            tor_port=self.tor_port,
-            tor_control_port=self.tor_control_port,
-            tor_control_password=self.tor_control_password
-        )
-
-        # Inject the shared lock into the fetcher
-        # This ensures that when the fetcher rotates circuits, it holds the global lock
-        fetcher._coordination_lock = self._tor_lock
-
-        try:
-            yield fetcher
-        finally:
-            logger.debug(f"  {worker_label} released Tor connection (shared mode)")
-
-    def get_stats(self) -> Dict[str, Any]:
-        """Get statistics about Tor usage."""
-        tracker_stats = self._tracker.get_stats()
-        return {
-            'mode': 'single_tor',
-            'current_exit_ip': self._current_exit_ip,
-            'tracker': tracker_stats
-        }
-
-
-class TorExitNodePool:
-    """
-    Pool manager for Tor exit nodes that can be shared across workers.
-
-    Each worker can acquire a dedicated Tor connection from the pool,
-    ensuring parallel processing without connection conflicts.
-
-    GUARANTEES UNIQUE EXIT NODES PER WORKER:
-    ========================================
-    This pool ensures that no two workers use the same exit IP by:
-    1. Checking the exit IP for each acquired connection
-    2. Automatically rotating circuits until a unique IP is obtained
-    3. Tracking active exit IPs to prevent collisions
-    4. Blocking acquisition until a unique IP is secured
-
-    TOR SETUP OPTIONS:
-    ==================
-    You can use this pool with either setup:
-
-    Option A: Single Tor Instance (Simpler Setup)
-    ----------------------------------------------
-    - Run one Tor service with control port enabled
-    - Pool automatically rotates circuits to get different exit IPs
-    - Configure torrc with:
-        ControlPort 9051
-        CookieAuthentication 0
-        HashedControlPassword <your_hashed_password>
-
-    Option B: Multiple Tor Instances (Better Performance)
-    -----------------------------------------------------
-    - Run multiple Tor processes on different ports
-    - Each worker gets a dedicated Tor instance
-    - Example with Docker Compose:
-        services:
-          tor1: {image: dperson/torproxy, ports: ["9050:9050", "9051:9051"]}
-          tor2: {image: dperson/torproxy, ports: ["9052:9050", "9053:9051"]}
-          tor3: {image: dperson/torproxy, ports: ["9054:9050", "9055:9051"]}
-
-    CONFIGURATION:
-    ==============
-    - enforce_unique_exits=True: Ensures unique IPs (recommended)
-    - max_rotation_attempts=10: How many times to rotate for unique IP
-    - pool_size: Number of concurrent connections (match worker count)
-
-    USAGE EXAMPLE:
-    ==============
-    ```python
-    pool = TorExitNodePool(pool_size=5, enforce_unique_exits=True)
-
-    # In worker function:
-    with pool.acquire(worker_id=worker_id) as fetcher:
-        transcript = fetcher.fetch_with_fallback(video_id)
-    ```
-
-    MONITORING:
-    ===========
-    Use get_stats() to verify unique exit IPs:
-    - stats['all_unique']: True if all workers have different IPs
-    - stats['active_exit_ips']: List of currently used IPs
-    - stats['unique_exit_ips']: Count of unique IPs in use
-    """
-
-    def __init__(
-        self,
-        pool_size: int = 5,
-        tor_host: str = '127.0.0.1',
-        base_socks_port: int = 9050,
-        base_control_port: int = 9051,
-        tor_control_password: Optional[str] = None,
-        enforce_unique_exits: bool = True,
-        max_rotation_attempts: int = 10,
-        cooldown_hours: float = 1.0
-    ):
-        """
-        Initialize exit node pool.
-
-        Args:
-            pool_size: Number of Tor connections in the pool
-            tor_host: Tor proxy host
-            base_socks_port: Base SOCKS port (pool will use base_port, base_port+1, ...)
-            base_control_port: Base control port (pool will use base_port, base_port+1, ...)
-            tor_control_password: Password for Tor control ports
-            enforce_unique_exits: If True, ensures each connection uses a different exit IP
-            max_rotation_attempts: Maximum attempts to find unique exit node
-            cooldown_hours: Hours before an exit IP can be reused (default: 1.0)
-        """
-        self.pool_size = pool_size
-        self.tor_host = tor_host
-        self.base_socks_port = base_socks_port
-        self.base_control_port = base_control_port
-        self.tor_control_password = tor_control_password
-        self.enforce_unique_exits = enforce_unique_exits
-        self.max_rotation_attempts = max_rotation_attempts
-
-        # Create pool of available connections
-        self._available = deque(range(pool_size))
-        self._in_use = set()
-        self._lock = threading.Lock()
-
-        # Track active exit IPs to ensure uniqueness
-        self._active_exit_ips: Dict[int, str] = {}  # connection_id -> exit_ip
-        self._exit_ip_lock = threading.Lock()
-
-        # Get persistent tracker for 1-hour cooldown enforcement
-        self._tracker = get_tracker(cooldown_hours=cooldown_hours)
-
-        logger.info(f"Initialized TorExitNodePool with {pool_size} connections")
-        logger.info(f"SOCKS ports: {base_socks_port}-{base_socks_port + pool_size - 1}")
-        logger.info(f"Control ports: {base_control_port}-{base_control_port + pool_size - 1}")
-        logger.info(f"Unique exit enforcement: {'ENABLED' if enforce_unique_exits else 'DISABLED'}")
-
-        # Show persistent tracker stats
-        tracker_stats = self._tracker.get_stats()
-        logger.info(f"Exit node tracker: {tracker_stats['in_cooldown']} IPs in cooldown, "
-                    f"{tracker_stats['available']} available")
-
-    def _get_exit_ip(self, fetcher: 'TorTranscriptFetcher', connection_id: int) -> Optional[str]:
-        """
-        Get the exit IP for a Tor connection.
-
-        Args:
-            fetcher: TorTranscriptFetcher instance
-            connection_id: Connection ID for logging
-
-        Returns:
-            Exit IP address or None if check fails
-        """
-        try:
-            response = fetcher.session.get(
-                'https://api.ipify.org',
-                proxies=fetcher.proxies,
-                timeout=10
-            )
-            exit_ip = response.text.strip()
-            logger.debug(f"  Connection #{connection_id} exit IP: {exit_ip}")
-            return exit_ip
-        except Exception as e:
-            logger.error(f"  Warning: Could not get exit IP for connection #{connection_id}: {e}")
-            return None
-
-    def _ensure_unique_exit(
-        self,
-        fetcher: 'TorTranscriptFetcher',
-        connection_id: int,
-        worker_id: Optional[int] = None
-    ) -> bool:
-        """
-        Ensure this connection has a unique exit IP not used by other active connections
-        or within the cooldown period (persistent across app restarts).
-
-        Rotates circuit until a unique IP is found or max attempts reached.
-
-        Args:
-            fetcher: TorTranscriptFetcher instance
-            connection_id: Connection ID
-            worker_id: Optional worker ID for logging
-
-        Returns:
-            True if unique exit obtained, False otherwise
-        """
-        if not self.enforce_unique_exits:
-            return True  # Skip enforcement if disabled
-
-        worker_label = f"worker-{worker_id}" if worker_id is not None else "unknown"
-
-        for attempt in range(self.max_rotation_attempts):
-            # Get current exit IP
-            exit_ip = self._get_exit_ip(fetcher, connection_id)
-
-            if exit_ip is None:
-                logger.error(f"  {worker_label}: Could not verify exit IP (attempt {attempt + 1})")
-                if attempt == 0:
-                    # Allow first attempt to proceed even if IP check fails
-                    return True
-                continue
-
-            # Check both: (1) active connections AND (2) persistent cooldown
-            with self._exit_ip_lock:
-                # Get all active IPs except our own connection
-                other_active_ips = {
-                    ip for cid, ip in self._active_exit_ips.items()
-                    if cid != connection_id
-                }
-
-                # Check if already in use by another active connection
-                if exit_ip in other_active_ips:
-                    logger.warning(f"  ⚠ {worker_label}: Exit IP {exit_ip} already in use by another active worker")
-                    logger.info(f"  Rotating circuit (attempt {attempt + 1}/{self.max_rotation_attempts})...")
-                    fetcher.rotate_tor_circuit()
-                    time.sleep(2)
-                    continue
-
-                # Check persistent cooldown (reused within last hour)
-                if not self._tracker.is_available(exit_ip):
-                    cooldown_remaining = self._tracker.get_cooldown_remaining(exit_ip)
-                    minutes_remaining = int(cooldown_remaining / 60) if cooldown_remaining else 0
-                    logger.warning(f"  ⚠ {worker_label}: Exit IP {exit_ip} in cooldown "
-                                   f"({minutes_remaining}m remaining)")
-                    logger.info(f"  Rotating circuit (attempt {attempt + 1}/{self.max_rotation_attempts})...")
-                    fetcher.rotate_tor_circuit()
-                    time.sleep(2)
-                    continue
-
-                # Unique IP found AND not in cooldown! Register it
-                self._active_exit_ips[connection_id] = exit_ip
-                self._tracker.record_use(exit_ip, worker_id=worker_id)
-                logger.success(f"  ✓ {worker_label}: Unique exit IP secured: {exit_ip}")
-                return True
-
-        logger.error(f"  ✗ {worker_label}: Could not obtain unique exit IP after "
-                     f"{self.max_rotation_attempts} attempts")
-        logger.info(f"  Proceeding with non-unique exit (may cause rate limiting)")
-        return False
-
-    @contextmanager
-    def acquire(self, worker_id: Optional[int] = None, timeout: float = 30.0):
-        """
-        Acquire a Tor connection from the pool (context manager).
-
-        Args:
-            worker_id: Optional worker ID for logging
-            timeout: Maximum time to wait for available connection
-
-        Yields:
-            TorTranscriptFetcher instance configured for this pool slot
-
-        Raises:
-            TimeoutError: If no connection becomes available within timeout
-        """
-        connection_id = None
-        start_time = time.time()
-
-        # Wait for available connection
-        while True:
-            with self._lock:
-                if self._available:
-                    connection_id = self._available.popleft()
-                    self._in_use.add(connection_id)
-                    break
-
-            # Check timeout
-            if time.time() - start_time > timeout:
-                raise TimeoutError(
-                    f"No Tor connection available after {timeout}s "
-                    f"(pool size: {self.pool_size}, in use: {len(self._in_use)})"
-                )
-
-            time.sleep(0.1)
-
-        # Calculate ports for this connection
-        socks_port = self.base_socks_port + connection_id
-        control_port = self.base_control_port + connection_id
-
-        worker_label = f"worker-{worker_id}" if worker_id is not None else "unknown"
-        logger.success(f"✓ {worker_label} acquired Tor connection #{connection_id} "
-                       f"(SOCKS: {socks_port}, Control: {control_port})")
-
-        # Create fetcher instance for this connection
-        fetcher = TorTranscriptFetcher(
-            tor_host=self.tor_host,
-            tor_port=socks_port,
-            tor_control_port=control_port,
-            tor_control_password=self.tor_control_password
-        )
-
-        # Ensure this connection has a unique exit IP
-        self._ensure_unique_exit(fetcher, connection_id, worker_id)
-
-        try:
-            yield fetcher
-        finally:
-            # Remove exit IP from tracking
-            with self._exit_ip_lock:
-                self._active_exit_ips.pop(connection_id, None)
-
-            # Release connection back to pool
-            with self._lock:
-                self._in_use.discard(connection_id)
-                self._available.append(connection_id)
-
-            logger.success(f"✓ {worker_label} released Tor connection #{connection_id}")
-
-    def get_connection(self, worker_id: Optional[int] = None) -> 'TorTranscriptFetcher':
-        """
-        Get a Tor connection from the pool (non-context manager version).
-
-        WARNING: You must manually call release_connection() when done!
-        Prefer using acquire() context manager instead.
-
-        Args:
-            worker_id: Optional worker ID for logging
-
-        Returns:
-            Tuple of (TorTranscriptFetcher, connection_id)
-        """
-        with self._lock:
-            if not self._available:
-                raise RuntimeError("No Tor connections available in pool")
-
-            connection_id = self._available.popleft()
-            self._in_use.add(connection_id)
-
-        socks_port = self.base_socks_port + connection_id
-        control_port = self.base_control_port + connection_id
-
-        worker_label = f"worker-{worker_id}" if worker_id is not None else "unknown"
-        logger.success(f"✓ {worker_label} acquired Tor connection #{connection_id}")
-
-        fetcher = TorTranscriptFetcher(
-            tor_host=self.tor_host,
-            tor_port=socks_port,
-            tor_control_port=control_port,
-            tor_control_password=self.tor_control_password
-        )
-        fetcher._pool_connection_id = connection_id  # Store for release
-
-        # Ensure this connection has a unique exit IP
-        self._ensure_unique_exit(fetcher, connection_id, worker_id)
-
-        return fetcher
-
-    def release_connection(self, fetcher: 'TorTranscriptFetcher'):
-        """
-        Release a connection back to the pool.
-
-        Args:
-            fetcher: TorTranscriptFetcher instance to release
-        """
-        if not hasattr(fetcher, '_pool_connection_id'):
-            raise ValueError("Fetcher was not acquired from pool")
-
-        connection_id = fetcher._pool_connection_id
-
-        # Remove exit IP from tracking
-        with self._exit_ip_lock:
-            self._active_exit_ips.pop(connection_id, None)
-
-        with self._lock:
-            self._in_use.discard(connection_id)
-            self._available.append(connection_id)
-
-        logger.success(f"✓ Released Tor connection #{connection_id}")
-
-    def get_stats(self) -> Dict[str, Any]:
-        """Get pool statistics including unique exit IPs and persistent tracker info."""
-        with self._lock:
-            in_use_count = len(self._in_use)
-            available_count = len(self._available)
-
-        with self._exit_ip_lock:
-            active_ips = list(self._active_exit_ips.values())
-            unique_ips = len(set(active_ips))
-
-        # Get persistent tracker stats
-        tracker_stats = self._tracker.get_stats()
-
-        return {
-            'pool_size': self.pool_size,
-            'available': available_count,
-            'in_use': in_use_count,
-            'utilization': in_use_count / self.pool_size if self.pool_size > 0 else 0,
-            'active_exit_ips': active_ips,
-            'unique_exit_ips': unique_ips,
-            'all_unique': unique_ips == in_use_count if in_use_count > 0 else True,
-            'tracker': tracker_stats  # Include persistent tracker stats
-        }
 
 
 class TorTranscriptFetcher:
@@ -501,22 +33,39 @@ class TorTranscriptFetcher:
         tor_host: str = '127.0.0.1',
         tor_port: int = 9050,
         tor_control_port: int = 9051,
-        tor_control_password: Optional[str] = None
+        tor_control_password: Optional[str] = None,
+        session: Optional[requests.Session] = None,
+        proxies: Optional[Dict[str, str]] = None,
+        exit_ip: Optional[str] = None
     ):
         """
-        Initialize with Tor proxy settings.
+        Initialize with Tor proxy settings or pre-configured session.
 
         Args:
             tor_host: Tor SOCKS proxy host (default: localhost)
             tor_port: Tor SOCKS proxy port (default: 9050)
             tor_control_port: Tor control port for circuit rotation (default: 9051)
             tor_control_password: Password for Tor control port (default: None)
+            session: Pre-configured requests.Session (for queue-based allocation)
+            proxies: Pre-configured proxies dict (for queue-based allocation)
+            exit_ip: Pre-allocated exit IP (for logging/tracking)
         """
-        self.proxies = {
-            'http': f'socks5://{tor_host}:{tor_port}',
-            'https': f'socks5://{tor_host}:{tor_port}'
-        }
-        self.session = requests.Session()
+        # Use pre-configured session/proxies if provided (queue-based approach)
+        if session is not None and proxies is not None:
+            self.session = session
+            self.proxies = proxies
+            self.exit_ip = exit_ip
+            self._using_preconfig = True
+        else:
+            # Legacy approach: create own session
+            self.proxies = {
+                'http': f'socks5://{tor_host}:{tor_port}',
+                'https': f'socks5://{tor_host}:{tor_port}'
+            }
+            self.session = requests.Session()
+            self.exit_ip = None
+            self._using_preconfig = False
+
         self.tor_host = tor_host
         self.tor_port = tor_port
         self.tor_control_port = tor_control_port
@@ -540,14 +89,19 @@ class TorTranscriptFetcher:
             exit_ip: Exit node IP (fetched if not provided)
         """
         if exit_ip is None:
-            try:
-                exit_ip = self.session.get(
-                    'https://api.ipify.org',
-                    proxies=self.proxies,
-                    timeout=5
-                ).text
-            except:
-                exit_ip = "unknown"
+            # Use pre-configured exit IP if available
+            if self._using_preconfig and self.exit_ip:
+                exit_ip = self.exit_ip
+            else:
+                # Fetch exit IP dynamically
+                try:
+                    exit_ip = self.session.get(
+                        'https://api.ipify.org',
+                        proxies=self.proxies,
+                        timeout=5
+                    ).text
+                except:
+                    exit_ip = "unknown"
 
         self.daily_tracker.record_attempt(
             exit_ip=exit_ip,
@@ -569,6 +123,11 @@ class TorTranscriptFetcher:
         Returns:
             True if circuit was rotated successfully, False otherwise
         """
+        # Skip rotation if using pre-configured session (queue-based approach)
+        if self._using_preconfig:
+            logger.debug("  Skipping rotation (using pre-allocated exit IP)")
+            return False
+
         # Skip if we already know control port is unavailable
         if not self._control_port_available:
             return False
@@ -1129,21 +688,12 @@ if __name__ == "__main__":
         logger.error("✗ Tor proxy not working. Check your setup.")
         logger.info(f"Make sure Tor is running on {fetcher.tor_host}:{fetcher.tor_port}")
 
-    # Example 2: Pool with multiple workers (recommended for parallel processing)
-    logger.debug("\n=== Example 2: Pool with Multiple Workers ===")
-    logger.info("NOTE: For true unique exit nodes, you need either:")
-    logger.info("  1. Multiple Tor instances on different ports, OR")
-    logger.info("  2. Circuit rotation with enforcement_unique_exits=True (automatic)")
+    # Example 2: Multi-Tor parallel processing (recommended)
+    logger.debug("\n=== Example 2: Multi-Tor Parallel Processing ===")
+    logger.info("Using TorExitNodeManager with multiple Tor daemon instances")
+    logger.info("Note: Requires multiple Tor instances running (docker-compose -f docker-compose.parallel.yml)")
 
-    # Create pool with 5 connections
-    # This will enforce unique exit IPs by rotating circuits if needed
-    pool = TorExitNodePool(
-        pool_size=5,
-        base_socks_port=9050,
-        base_control_port=9051,
-        enforce_unique_exits=True,  # Ensures each worker gets different exit IP
-        max_rotation_attempts=10    # Try up to 10 times to get unique IP
-    )
+    from .tor_exit_manager import TorExitNodeManager
 
     # List of videos to process in parallel
     video_ids = [
@@ -1152,28 +702,33 @@ if __name__ == "__main__":
         "9bZkp7q19f0",  # PSY - Gangnam Style
     ]
 
-    def process_video(worker_id: int, video_id: str):
-        """Worker function that acquires a connection from pool."""
-        try:
-            # Acquire connection from pool (auto-releases on exit)
-            with pool.acquire(worker_id=worker_id) as fetcher:
-                logger.debug(f"Worker {worker_id}: Processing {video_id}")
-                transcript = fetcher.fetch_with_fallback(video_id)
+    # Initialize manager (auto-detects Tor instances)
+    manager = TorExitNodeManager()
 
-                if transcript:
-                    return {
-                        'worker_id': worker_id,
-                        'video_id': video_id,
-                        'success': True,
-                        'length': transcript['length'],
-                        'duration': transcript['duration']
-                    }
-                else:
-                    return {
-                        'worker_id': worker_id,
-                        'video_id': video_id,
-                        'success': False
-                    }
+    def process_video(worker_id: int, video_id: str):
+        """Worker function that gets fetcher from manager."""
+        try:
+            # Get fetcher configured for this worker
+            # Manager assigns worker to Tor instance (round-robin)
+            fetcher = manager.get_fetcher_for_worker(worker_id)
+
+            logger.debug(f"Worker {worker_id}: Processing {video_id}")
+            transcript = fetcher.fetch_with_fallback(video_id)
+
+            if transcript:
+                return {
+                    'worker_id': worker_id,
+                    'video_id': video_id,
+                    'success': True,
+                    'length': transcript['length'],
+                    'duration': transcript['duration']
+                }
+            else:
+                return {
+                    'worker_id': worker_id,
+                    'video_id': video_id,
+                    'success': False
+                }
         except Exception as e:
             return {
                 'worker_id': worker_id,
@@ -1200,13 +755,3 @@ if __name__ == "__main__":
         else:
             error = result.get('error', 'Unknown error')
             logger.error(f"✗ Worker {result['worker_id']}: {result['video_id']} - {error}")
-
-    # Show pool statistics
-    stats = pool.get_stats()
-    logger.info(f"\n=== Pool Statistics ===")
-    logger.info(f"Connections: {stats['in_use']}/{stats['pool_size']} in use "
-                f"({stats['utilization']:.1%} utilization)")
-    logger.info(f"Unique exit IPs: {stats['unique_exit_ips']}/{stats['in_use']}")
-    logger.error(f"All unique: {'✓ YES' if stats['all_unique'] else '✗ NO'}")
-    if stats['active_exit_ips']:
-        logger.info(f"Active IPs: {', '.join(stats['active_exit_ips'])}")
