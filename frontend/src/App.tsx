@@ -24,6 +24,13 @@ const queryClient = new QueryClient({
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
 
+  // Bypass authentication in development mode
+  const devMode = import.meta.env.VITE_DEV_MODE === 'true';
+
+  if (devMode) {
+    return <>{children}</>;
+  }
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -59,20 +66,33 @@ function CreditsPage() {
   );
 }
 
+function DevModeRedirect() {
+  return <Navigate to="/" replace />;
+}
+
 function App() {
   const initAuth = useAuthStore((state) => state.initAuth);
+  const devMode = import.meta.env.VITE_DEV_MODE === 'true';
 
-  // Initialize auth state on app mount
+  // Initialize auth state on app mount (skip in dev mode)
   useEffect(() => {
-    initAuth();
-  }, [initAuth]);
+    if (!devMode) {
+      initAuth();
+    }
+  }, [initAuth, devMode]);
 
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/auth/callback" element={<LoginPage />} />
+          <Route
+            path="/login"
+            element={devMode ? <DevModeRedirect /> : <LoginPage />}
+          />
+          <Route
+            path="/auth/callback"
+            element={devMode ? <DevModeRedirect /> : <LoginPage />}
+          />
           <Route
             path="/"
             element={
