@@ -1,0 +1,61 @@
+# Commands to Organize Repository Files
+
+cd /home/justin/Documents/dev/workspaces/ytstudybuddy
+
+# Move markdown docs to docs/ folder
+mv CLEANUP-INSTRUCTIONS.md docs/
+mv FIX-FRONTEND-TRACKING.md docs/
+mv SEPARATE-FRONTEND-REPO.md docs/
+mv FRONTEND-SEPARATION-GUIDE.md docs/
+mv START-HERE.md docs/
+mv RETRY_GUIDE.md docs/
+mv OBSIDIAN_LINKER_ANALYSIS.md docs/
+
+# Create scripts directory if it doesn't exist
+mkdir -p scripts
+
+# Move scripts to scripts/ folder
+mv cleanup_script.sh scripts/
+mv check_frontend_status.sh scripts/
+mv create_frontend_repo.sh scripts/
+mv COMMIT-THESE-FILES.sh scripts/
+mv fix_line_endings.sh scripts/
+mv create_frontend_repo_simple.sh scripts/
+mv organize_repo.sh scripts/
+
+# Add everything to git (docs are ignored but we force add with -f)
+git add -f docs/
+git add scripts/
+
+# Check status
+git status
+
+# Commit
+git commit -m "chore: Organize documentation and scripts
+
+- Move all markdown docs to docs/ folder
+- Move helper scripts to scripts/ folder
+- Keep Docker/deployment scripts in root (entrypoint-python-tor.sh, run-docker.sh, start_streamlit.sh)
+- Prepare repository for frontend separation
+
+Documentation added:
+  - docs/CLEANUP-INSTRUCTIONS.md
+  - docs/FIX-FRONTEND-TRACKING.md
+  - docs/SEPARATE-FRONTEND-REPO.md
+  - docs/FRONTEND-SEPARATION-GUIDE.md
+  - docs/START-HERE.md
+  - docs/RETRY_GUIDE.md
+  - docs/OBSIDIAN_LINKER_ANALYSIS.md
+  - docs/FRONTEND-REPOSITORY.md (already there)
+  - docs/FOLDER-STRUCTURE-GUIDE.md (already there)
+  - docs/QUICK-FRONTEND-REVIEW.md (already there)
+
+Scripts organized in scripts/:
+  - scripts/create_frontend_repo_simple.sh (ready to use)
+  - scripts/cleanup_script.sh
+  - scripts/check_frontend_status.sh
+  - scripts/create_frontend_repo.sh
+  - scripts/fix_line_endings.sh"
+
+# Push to remote
+git push origin develop
