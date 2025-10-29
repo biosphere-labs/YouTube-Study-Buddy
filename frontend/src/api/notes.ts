@@ -7,10 +7,19 @@ export interface UpdateNoteRequest {
   tags?: string[];
 }
 
+export interface ListNotesResponse {
+  notes: Note[];
+  nextToken?: string;
+}
+
 export const notesApi = {
-  // Get all notes for current user
-  getNotes: async (): Promise<Note[]> => {
-    const response = await apiClient.get<Note[]>('/notes');
+  // Get all notes for current user with pagination support
+  getNotes: async (limit: number = 50, nextToken?: string): Promise<ListNotesResponse> => {
+    const params: Record<string, string | number> = { limit };
+    if (nextToken) {
+      params.nextToken = nextToken;
+    }
+    const response = await apiClient.get<ListNotesResponse>('/notes', { params });
     return response.data;
   },
 
@@ -20,9 +29,9 @@ export const notesApi = {
     return response.data;
   },
 
-  // Update a note
+  // Update a note (using PUT as per serverless standards)
   updateNote: async (id: string, data: UpdateNoteRequest): Promise<Note> => {
-    const response = await apiClient.patch<Note>(`/notes/${id}`, data);
+    const response = await apiClient.put<Note>(`/notes/${id}`, data);
     return response.data;
   },
 

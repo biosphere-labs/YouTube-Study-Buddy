@@ -9,10 +9,12 @@ export function useCredits() {
     queryFn: creditsApi.getBalance,
   });
 
-  const { data: transactions, isLoading: isLoadingTransactions } = useQuery({
+  const { data: transactionsData, isLoading: isLoadingTransactions } = useQuery({
     queryKey: ['creditTransactions'],
-    queryFn: creditsApi.getTransactions,
+    queryFn: () => creditsApi.getTransactions(),
   });
+
+  const transactions = transactionsData?.transactions || [];
 
   const { data: usageStats, isLoading: isLoadingStats } = useQuery({
     queryKey: ['usageStats'],

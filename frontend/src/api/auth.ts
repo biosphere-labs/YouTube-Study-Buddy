@@ -1,38 +1,39 @@
-import apiClient from './client';
-import type { AuthResponse, User } from '@/types';
+import type { User } from '@/types';
+import {
+  cognitoSignInWithProvider,
+  cognitoSignOut,
+  getCognitoUser,
+  isAuthenticated,
+} from '@/lib/cognito';
 
 export const authApi = {
-  // Initialize OAuth flow
-  loginWithGoogle: () => {
-    window.location.href = `${apiClient.defaults.baseURL}/auth/google`;
+  // Sign in with Google via Cognito
+  loginWithGoogle: async (): Promise<void> => {
+    await cognitoSignInWithProvider('Google');
   },
 
-  loginWithGitHub: () => {
-    window.location.href = `${apiClient.defaults.baseURL}/auth/github`;
+  // Sign in with GitHub via Cognito
+  loginWithGitHub: async (): Promise<void> => {
+    await cognitoSignInWithProvider('GitHub');
   },
 
-  loginWithDiscord: () => {
-    window.location.href = `${apiClient.defaults.baseURL}/auth/discord`;
+  // Sign in with Discord via Cognito
+  loginWithDiscord: async (): Promise<void> => {
+    await cognitoSignInWithProvider('Discord');
   },
 
-  // Handle OAuth callback
-  handleCallback: async (code: string, provider: string): Promise<AuthResponse> => {
-    const response = await apiClient.post<AuthResponse>(`/auth/${provider}/callback`, {
-      code,
-    });
-    return response.data;
+  // Get current user from Cognito
+  getCurrentUser: async (): Promise<User | null> => {
+    return await getCognitoUser();
   },
 
-  // Get current user
-  getCurrentUser: async (): Promise<User> => {
-    const response = await apiClient.get<User>('/auth/me');
-    return response.data;
+  // Check if user is authenticated
+  isAuthenticated: async (): Promise<boolean> => {
+    return await isAuthenticated();
   },
 
-  // Logout
+  // Sign out via Cognito
   logout: async (): Promise<void> => {
-    await apiClient.post('/auth/logout');
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('user');
+    await cognitoSignOut();
   },
 };

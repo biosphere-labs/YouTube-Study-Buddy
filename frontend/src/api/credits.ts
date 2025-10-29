@@ -6,6 +6,11 @@ export interface PurchaseCreditsRequest {
   paymentMethodId: string;
 }
 
+export interface ListTransactionsResponse {
+  transactions: CreditTransaction[];
+  nextToken?: string;
+}
+
 export const creditsApi = {
   // Get credit balance
   getBalance: async (): Promise<CreditBalance> => {
@@ -13,13 +18,17 @@ export const creditsApi = {
     return response.data;
   },
 
-  // Get credit transaction history
-  getTransactions: async (): Promise<CreditTransaction[]> => {
-    const response = await apiClient.get<CreditTransaction[]>('/credits/transactions');
+  // Get credit transaction history with pagination support
+  getTransactions: async (limit: number = 50, nextToken?: string): Promise<ListTransactionsResponse> => {
+    const params: Record<string, string | number> = { limit };
+    if (nextToken) {
+      params.nextToken = nextToken;
+    }
+    const response = await apiClient.get<ListTransactionsResponse>('/credits/transactions', { params });
     return response.data;
   },
 
-  // Purchase credits
+  // Purchase credits via Stripe
   purchaseCredits: async (data: PurchaseCreditsRequest): Promise<CreditTransaction> => {
     const response = await apiClient.post<CreditTransaction>('/credits/purchase', data);
     return response.data;

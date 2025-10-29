@@ -6,16 +6,25 @@ export interface SubmitVideoRequest {
   subject?: string;
 }
 
+export interface ListVideosResponse {
+  videos: Video[];
+  nextToken?: string;
+}
+
 export const videosApi = {
-  // Submit a new video for processing
+  // Submit a new video for processing via API Gateway
   submitVideo: async (data: SubmitVideoRequest): Promise<Video> => {
-    const response = await apiClient.post<Video>('/videos', data);
+    const response = await apiClient.post<Video>('/videos/submit', data);
     return response.data;
   },
 
-  // Get all videos for current user
-  getVideos: async (): Promise<Video[]> => {
-    const response = await apiClient.get<Video[]>('/videos');
+  // Get all videos for current user with pagination support
+  getVideos: async (limit: number = 50, nextToken?: string): Promise<ListVideosResponse> => {
+    const params: Record<string, string | number> = { limit };
+    if (nextToken) {
+      params.nextToken = nextToken;
+    }
+    const response = await apiClient.get<ListVideosResponse>('/videos', { params });
     return response.data;
   },
 

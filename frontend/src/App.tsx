@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LoginPage } from './components/Auth/LoginPage';
@@ -9,6 +10,7 @@ import { NoteViewer } from './components/Notes/NoteViewer';
 import { CreditBalance } from './components/Credits/CreditBalance';
 import { TransactionHistory } from './components/Credits/TransactionHistory';
 import { useAuth } from './hooks/useAuth';
+import { useAuthStore } from './stores/authStore';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -58,11 +60,19 @@ function CreditsPage() {
 }
 
 function App() {
+  const initAuth = useAuthStore((state) => state.initAuth);
+
+  // Initialize auth state on app mount
+  useEffect(() => {
+    initAuth();
+  }, [initAuth]);
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/auth/callback" element={<LoginPage />} />
           <Route
             path="/"
             element={

@@ -8,12 +8,12 @@ import { videosApi } from '@/api/videos';
 export function Dashboard() {
   const { balance, usageStats, isLoading: isLoadingCredits } = useCredits();
 
-  const { data: videos, isLoading: isLoadingVideos } = useQuery({
+  const { data: videosData, isLoading: isLoadingVideos } = useQuery({
     queryKey: ['videos'],
-    queryFn: videosApi.getVideos,
+    queryFn: () => videosApi.getVideos(),
   });
 
-  const recentVideos = videos?.slice(0, 5) || [];
+  const recentVideos = videosData?.videos?.slice(0, 5) || [];
 
   if (isLoadingCredits || isLoadingVideos) {
     return (

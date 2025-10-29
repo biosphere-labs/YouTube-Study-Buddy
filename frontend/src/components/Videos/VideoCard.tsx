@@ -2,17 +2,33 @@ import { Link } from 'react-router-dom';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ProgressBar } from './ProgressBar';
-import { Video } from '@/types';
+import type { Video } from '@/types';
 import { FileText, Trash2, RefreshCw } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { videosApi } from '@/api/videos';
+import { usePolling } from '@/hooks/usePolling';
 
 interface VideoCardProps {
   video: Video;
 }
 
-export function VideoCard({ video }: VideoCardProps) {
+export function VideoCard({ video: initialVideo }: VideoCardProps) {
   const queryClient = useQueryClient();
+
+  // Use polling hook to track video progress
+  const { video: polledVideo } = usePolling(initialVideo.id, {
+    enabled: initialVideo.status === 'pending' || initialVideo.status === 'processing',
+    onComplete: () => {
+      // Refresh video list when processing completes
+      queryClient.invalidateQueries({ queryKey: ['videos'] });
+    },
+    onError: (error) => {
+      console.error('Error polling video:', error);
+    },
+  });
+
+  // Use polled video if available, otherwise use initial video
+  const video = polledVideo || initialVideo;
 
   const deleteMutation = useMutation({
     mutationFn: () => videosApi.deleteVideo(video.id),

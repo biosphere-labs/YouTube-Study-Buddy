@@ -1,35 +1,71 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User } from '@/types';
+import { getCognitoUser, getIdToken } from '@/lib/cognito';
 
 interface AuthState {
   user: User | null;
-  token: string | null;
   isAuthenticated: boolean;
-  setAuth: (user: User, token: string) => void;
+  isLoading: boolean;
+  setUser: (user: User | null) => void;
+  setIsAuthenticated: (isAuthenticated: boolean) => void;
+  setIsLoading: (isLoading: boolean) => void;
   clearAuth: () => void;
+  initAuth: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
       user: null,
-      token: null,
       isAuthenticated: false,
-      setAuth: (user, token) => {
-        localStorage.setItem('auth_token', token);
-        set({ user, token, isAuthenticated: true });
+      isLoading: true,
+
+      setUser: (user) => {
+        set({ user, isAuthenticated: !!user });
       },
+
+      setIsAuthenticated: (isAuthenticated) => {
+        set({ isAuthenticated });
+      },
+
+      setIsLoading: (isLoading) => {
+        set({ isLoading });
+      },
+
       clearAuth: () => {
-        localStorage.removeItem('auth_token');
-        set({ user: null, token: null, isAuthenticated: false });
+        set({ user: null, isAuthenticated: false });
+      },
+
+      // Initialize auth state from Cognito
+      initAuth: async () => {
+        try {
+          set({ isLoading: true });
+
+          // Check if user has valid Cognito session
+          const token = await getIdToken();
+          if (!token) {
+            set({ user: null, isAuthenticated: false, isLoading: false });
+            return;
+          }
+
+          // Get user data from Cognito
+          const user = await getCognitoUser();
+          if (user) {
+            set({ user, isAuthenticated: true, isLoading: false });
+          } else {
+            set({ user: null, isAuthenticated: false, isLoading: false });
+          }
+        } catch (error) {
+          console.error('Error initializing auth:', error);
+          set({ user: null, isAuthenticated: false, isLoading: false });
+        }
       },
     }),
     {
       name: 'auth-storage',
       partialize: (state) => ({
         user: state.user,
-        token: state.token,
         isAuthenticated: state.isAuthenticated,
       }),
     }

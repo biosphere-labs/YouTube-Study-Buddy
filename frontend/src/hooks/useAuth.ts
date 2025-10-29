@@ -1,18 +1,9 @@
 import { useAuthStore } from '@/stores/authStore';
 import { authApi } from '@/api/auth';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import type { AuthResponse } from '@/types';
+import { useMutation } from '@tanstack/react-query';
 
 export function useAuth() {
-  const { user, token, isAuthenticated, setAuth, clearAuth } = useAuthStore();
-
-  // Query to get current user
-  const { data: currentUser, isLoading } = useQuery({
-    queryKey: ['currentUser'],
-    queryFn: authApi.getCurrentUser,
-    enabled: !!token && !user,
-    retry: false,
-  });
+  const { user, isAuthenticated, isLoading, clearAuth } = useAuthStore();
 
   // Mutation for logout
   const logoutMutation = useMutation({
@@ -22,19 +13,14 @@ export function useAuth() {
     },
   });
 
-  const login = (authResponse: AuthResponse) => {
-    setAuth(authResponse.user, authResponse.token);
-  };
-
   const logout = () => {
     logoutMutation.mutate();
   };
 
   return {
-    user: user || currentUser,
+    user,
     isAuthenticated,
     isLoading,
-    login,
     logout,
     loginWithGoogle: authApi.loginWithGoogle,
     loginWithGitHub: authApi.loginWithGitHub,

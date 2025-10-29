@@ -5,10 +5,13 @@ import { videosApi } from '@/api/videos';
 import { Loader2 } from 'lucide-react';
 
 export function VideoList() {
-  const { data: videos, isLoading, error } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ['videos'],
-    queryFn: videosApi.getVideos,
+    queryFn: () => videosApi.getVideos(),
   });
+
+  // Extract videos from the response (API Gateway returns { videos: [], nextToken?: string })
+  const videos = data?.videos || [];
 
   if (isLoading) {
     return (

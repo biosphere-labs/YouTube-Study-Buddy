@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCredits } from '@/hooks/useCredits';
 import { ArrowDownCircle, ArrowUpCircle, Loader2 } from 'lucide-react';
-import { CreditTransaction } from '@/types';
+import type { CreditTransaction } from '@/types';
 
 export function TransactionHistory() {
   const { transactions, isLoading } = useCredits();
