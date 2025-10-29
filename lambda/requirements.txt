@@ -1,0 +1,26 @@
+# AWS Lambda Dependencies for YouTube Study Buddy
+#
+# These dependencies are required for all Lambda functions.
+# Install with: pip install -r requirements.txt
+#
+# Note: For process_video Lambda, you'll also need to include the
+# youtube-study-buddy package and its dependencies in the deployment package.
+
+# AWS SDK for Python
+boto3>=1.34.0
+botocore>=1.34.0
+
+# JWT token verification for Cognito
+PyJWT>=2.8.0
+cryptography>=41.0.0
+
+# Stripe payment processing
+stripe>=7.0.0
+
+# JSON logging (optional but recommended)
+python-json-logger>=2.0.0
+
+# Note: The process_video Lambda also requires:
+# - youtube-study-buddy package (from ../src/yt_study_buddy)
+# - All dependencies from ../pyproject.toml
+# These should be included in a Lambda Layer or deployment package
