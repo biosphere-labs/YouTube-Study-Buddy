@@ -38,3 +38,12 @@ dist-electron/
 *.dmg
 *.exe
 *.msi
+
+# Feature branch worktrees
+cli-json-output/
+fastapi-core/
+fastapi-routes/
+fastapi-websocket/
+frontend/
+react-frontend/
+stripe-integration/
