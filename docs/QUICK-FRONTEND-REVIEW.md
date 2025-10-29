@@ -10,6 +10,17 @@ npm run dev
 
 Then open http://localhost:5173 in your browser.
 
+### Skip Login for Development
+
+The `.env` file is already configured with `VITE_DEV_MODE=true`, which bypasses authentication. You'll go straight to the dashboard without needing to log in.
+
+To require login again, edit `.env` and set:
+```bash
+VITE_DEV_MODE=false
+```
+
+See `frontend/DEV-MODE.md` for full documentation.
+
 ---
 
 ## What You'll See
@@ -109,10 +120,12 @@ ytstudybuddy/
 
 - [ ] Navigate to `react-frontend/frontend`
 - [ ] Run `npm install`
+- [ ] Verify `.env` has `VITE_DEV_MODE=true` (for auth bypass)
 - [ ] Run `npm run dev`
 - [ ] Open http://localhost:5173
-- [ ] Test authentication flow
-- [ ] Explore dashboard, videos, notes pages
+- [ ] Should go directly to dashboard (no login required)
+- [ ] Explore dashboard, videos, notes, credits pages
+- [ ] Test with `VITE_DEV_MODE=false` to see login flow
 - [ ] Check API integration with backend
 - [ ] Review code structure in `src/`
 - [ ] Decide what to do with orphaned `frontend/Dockerfile`
