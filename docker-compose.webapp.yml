@@ -1,0 +1,317 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: ytstudy-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ytstudy}
+      POSTGRES_USER: ${POSTGRES_USER:-ytstudy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ytstudy}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ytstudy-network
+
+  # Redis Cache & Job Queue
+  redis:
+    image: redis:7-alpine
+    container_name: ytstudy-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-changeme}
+    volumes:
+      - redis-data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ytstudy-network
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: ytstudy-backend
+    environment:
+      # Application
+      APP_NAME: ${APP_NAME:-YouTube Study Buddy API}
+      DEBUG: ${DEBUG:-false}
+
+      # Database
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ytstudy}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ytstudy}
+
+      # Redis
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+
+      # JWT
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-this-secret-key}
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-10080}
+
+      # OAuth Providers
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: ${API_URL:-http://localhost:8000}/auth/callback/google
+
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      GITHUB_REDIRECT_URI: ${API_URL:-http://localhost:8000}/auth/callback/github
+
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET}
+      DISCORD_REDIRECT_URI: ${API_URL:-http://localhost:8000}/auth/callback/discord
+
+      # Claude API
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY}
+
+      # Stripe
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+
+      # CORS
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
+
+      # CLI Settings
+      CLI_TIMEOUT: ${CLI_TIMEOUT:-600}
+      CLI_WORKERS: ${CLI_WORKERS:-5}
+
+      # Tor Proxy Settings
+      TOR_ENABLED: ${TOR_ENABLED:-true}
+      TOR_HOST: tor-proxy-1
+      TOR_PORT: 9050
+    volumes:
+      - ./data:/app/data  # User notes and outputs
+      - ./src:/app/src    # Python CLI source code
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      tor-proxy-1:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - ytstudy-network
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # WebSocket Server
+  websocket:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: ytstudy-websocket
+    environment:
+      # Application
+      APP_NAME: ${APP_NAME:-YouTube Study Buddy WebSocket}
+      DEBUG: ${DEBUG:-false}
+
+      # JWT
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-this-secret-key}
+      JWT_ALGORITHM: HS256
+
+      # Redis
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379/1
+
+      # CORS
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
+    ports:
+      - "${WEBSOCKET_PORT:-8001}:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - ytstudy-network
+    command: python -m api.websocket.server --host 0.0.0.0 --port 8001
+
+  # Celery Worker (for background jobs)
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: ytstudy-worker
+    environment:
+      # Database
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ytstudy}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-ytstudy}
+
+      # Redis
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+
+      # Claude API
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY}
+
+      # CLI Settings
+      CLI_TIMEOUT: ${CLI_TIMEOUT:-600}
+      CLI_WORKERS: ${CLI_WORKERS:-5}
+
+      # Tor Proxy Settings
+      TOR_ENABLED: ${TOR_ENABLED:-true}
+      TOR_HOST: tor-proxy-1
+      TOR_PORT: 9050
+    volumes:
+      - ./data:/app/data
+      - ./src:/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      tor-proxy-1:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - ytstudy-network
+    command: celery -A api.jobs.worker worker --loglevel=info --concurrency=5
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ytstudy-frontend
+    environment:
+      VITE_API_URL: ${API_URL:-http://localhost:8000}
+      VITE_WS_URL: ${WS_URL:-ws://localhost:8001}
+      VITE_STRIPE_PUBLIC_KEY: ${STRIPE_PUBLIC_KEY}
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    depends_on:
+      - backend
+      - websocket
+    restart: unless-stopped
+    networks:
+      - ytstudy-network
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+  # Nginx Reverse Proxy (Production)
+  nginx:
+    image: nginx:alpine
+    container_name: ytstudy-nginx
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
+    ports:
+      - "${NGINX_PORT:-80}:80"
+      - "${NGINX_SSL_PORT:-443}:443"
+    depends_on:
+      - backend
+      - websocket
+      - frontend
+    restart: unless-stopped
+    networks:
+      - ytstudy-network
+    profiles:
+      - production
+
+  # Tor Proxy Instances (for rate limiting bypass)
+  tor-proxy-1:
+    image: dperson/torproxy:latest
+    container_name: ytstudy-tor-1
+    ports:
+      - "9050:9050"
+      - "9051:9051"
+    volumes:
+      - tor-data-1:/var/lib/tor
+    restart: unless-stopped
+    networks:
+      - ytstudy-network
+
+  tor-proxy-2:
+    image: dperson/torproxy:latest
+    container_name: ytstudy-tor-2
+    ports:
+      - "9052:9052"
+      - "9053:9053"
+    environment:
+      TOR_SOCKS_PORT: 9052
+      TOR_CONTROL_PORT: 9053
+    volumes:
+      - tor-data-2:/var/lib/tor
+    restart: unless-stopped
+    networks:
+      - ytstudy-network
+
+  tor-proxy-3:
+    image: dperson/torproxy:latest
+    container_name: ytstudy-tor-3
+    ports:
+      - "9054:9054"
+      - "9055:9055"
+    environment:
+      TOR_SOCKS_PORT: 9054
+      TOR_CONTROL_PORT: 9055
+    volumes:
+      - tor-data-3:/var/lib/tor
+    restart: unless-stopped
+    networks:
+      - ytstudy-network
+
+  tor-proxy-4:
+    image: dperson/torproxy:latest
+    container_name: ytstudy-tor-4
+    ports:
+      - "9056:9056"
+      - "9057:9057"
+    environment:
+      TOR_SOCKS_PORT: 9056
+      TOR_CONTROL_PORT: 9057
+    volumes:
+      - tor-data-4:/var/lib/tor
+    restart: unless-stopped
+    networks:
+      - ytstudy-network
+
+  tor-proxy-5:
+    image: dperson/torproxy:latest
+    container_name: ytstudy-tor-5
+    ports:
+      - "9058:9058"
+      - "9059:9059"
+    environment:
+      TOR_SOCKS_PORT: 9058
+      TOR_CONTROL_PORT: 9059
+    volumes:
+      - tor-data-5:/var/lib/tor
+    restart: unless-stopped
+    networks:
+      - ytstudy-network
+
+volumes:
+  postgres-data:
+    name: ytstudy-postgres-data
+  redis-data:
+    name: ytstudy-redis-data
+  tor-data-1:
+    name: ytstudy-tor-data-1
+  tor-data-2:
+    name: ytstudy-tor-data-2
+  tor-data-3:
+    name: ytstudy-tor-data-3
+  tor-data-4:
+    name: ytstudy-tor-data-4
+  tor-data-5:
+    name: ytstudy-tor-data-5
+
+networks:
+  ytstudy-network:
+    name: ytstudy-network
+    driver: bridge
