@@ -39,11 +39,6 @@ dist-electron/
 *.exe
 *.msi
 
-# Feature branch worktrees
+# Feature branch worktrees (code is on feature branches, these are just working directories)
+# cli-json-output/ - Code is on feature/cli-json-output branch
 cli-json-output/
-fastapi-core/
-fastapi-routes/
-fastapi-websocket/
-frontend/
-react-frontend/
-stripe-integration/
