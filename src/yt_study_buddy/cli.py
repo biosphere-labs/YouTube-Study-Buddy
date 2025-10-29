@@ -22,6 +22,7 @@ from .knowledge_graph import KnowledgeGraph
 from .obsidian_linker import ObsidianLinker
 from .parallel_processor import ParallelVideoProcessor, ProcessingResult, ProcessingMetrics
 from .processing_pipeline import process_video_job
+from .progress_reporter import init_progress_reporter, get_progress_reporter
 from .study_notes_generator import StudyNotesGenerator
 from .video_job import create_job_from_url
 from .video_processor import VideoProcessor
@@ -38,7 +39,8 @@ class YouTubeStudyNotes:
 
     def __init__(self, subject=None, global_context=True, base_dir="notes",
                  generate_assessments=True, auto_categorize=True,
-                 parallel=False, max_workers=3, export_pdf=False, pdf_theme='obsidian'):
+                 parallel=False, max_workers=3, export_pdf=False, pdf_theme='obsidian',
+                 json_progress=False):
         self.subject = subject
         self.global_context = global_context
         self.base_dir = base_dir
@@ -49,6 +51,10 @@ class YouTubeStudyNotes:
         self.max_workers = max_workers
         self.export_pdf = export_pdf
         self.pdf_theme = pdf_theme
+        self.json_progress = json_progress
+
+        # Initialize progress reporter
+        init_progress_reporter(enabled=json_progress)
 
         self.video_processor = VideoProcessor("tor")
         self.knowledge_graph = KnowledgeGraph(base_dir, subject, global_context)
@@ -360,6 +366,7 @@ Options:
   --no-auto-categorize     Disable auto-categorization
   --export-pdf             Export notes to PDF with Obsidian-style formatting
   --pdf-theme <theme>      PDF theme: default, obsidian, academic, minimal (default: obsidian)
+  --format <format>        Output format: console (default) or json-progress (for API integration)
   --help, -h               Show this help message
 
 Examples:
@@ -427,6 +434,8 @@ def main():
     parser.add_argument('--export-pdf', action='store_true', help='Export notes to PDF (requires: uv pip install weasyprint markdown2)')
     parser.add_argument('--pdf-theme', default='obsidian', choices=['default', 'obsidian', 'academic', 'minimal'],
                        help='PDF theme style (default: obsidian)')
+    parser.add_argument('--format', choices=['console', 'json-progress'], default='console',
+                       help='Output format: console (default) or json-progress (for API integration)')
     parser.add_argument('--debug-logging', action='store_true', help='Enable detailed debug logging to debug_logs/ directory')
     parser.add_argument('--help', '-h', action='store_true', help='Show help message')
 
@@ -445,6 +454,13 @@ def main():
         logger.info(f"  API log: {logger.api_log}")
         
 
+    # Disable rich console output when using JSON progress
+    json_progress_enabled = args.format == 'json-progress'
+    if json_progress_enabled:
+        # Redirect loguru to stderr to keep stdout clean for JSON
+        logger.remove()
+        logger.add(sys.stderr, level="WARNING")
+
     # Create app instance with configuration
     app = YouTubeStudyNotes(
         subject=args.subject,
@@ -454,7 +470,8 @@ def main():
         parallel=args.parallel,
         max_workers=args.workers,
         export_pdf=args.export_pdf,
-        pdf_theme=args.pdf_theme
+        pdf_theme=args.pdf_theme,
+        json_progress=json_progress_enabled
     )
 
     # Collect URLs from either command line or file

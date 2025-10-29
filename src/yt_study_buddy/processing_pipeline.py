@@ -10,6 +10,7 @@ from typing import Optional
 
 from loguru import logger
 
+from .progress_reporter import get_progress_reporter, ProgressStep
 from .video_job import VideoProcessingJob, ProcessingStage
 
 
@@ -43,6 +44,11 @@ def fetch_transcript_and_title(
 
     stage_start = time.time()
     job.set_stage(ProcessingStage.FETCHING_TRANSCRIPT)
+
+    # Report progress
+    reporter = get_progress_reporter()
+    if reporter:
+        reporter.report_step(ProgressStep.FETCHING_TRANSCRIPT, 25.0, "Fetching transcript...")
 
     try:
         # Fetch transcript
@@ -124,8 +130,16 @@ def generate_study_notes(
     stage_start = time.time()
     job.set_stage(ProcessingStage.GENERATING_NOTES)
 
+    # Report progress
+    reporter = get_progress_reporter()
+    if reporter:
+        reporter.report_step(ProgressStep.CALLING_CLAUDE, 40.0, "Calling Claude API...")
+
     try:
         logger.info(f"  [Job {job.video_id}] Generating study notes...")
+
+        if reporter:
+            reporter.report_step(ProgressStep.GENERATING_NOTES, 60.0, "Generating study notes...")
 
         # Request title suggestion in the same call if needed (no extra LLM call)
         job.study_notes = notes_generator.generate_notes(
@@ -191,6 +205,11 @@ def generate_assessment(
     stage_start = time.time()
     job.set_stage(ProcessingStage.GENERATING_ASSESSMENT)
 
+    # Report progress
+    reporter = get_progress_reporter()
+    if reporter:
+        reporter.report_step(ProgressStep.GENERATING_ASSESSMENT, 75.0, "Generating assessment...")
+
     try:
         logger.info(f"  [Job {job.video_id}] Generating assessment...")
         job.assessment_content = assessment_generator.generate_assessment(
@@ -247,6 +266,11 @@ def write_markdown_files(
     stage_start = time.time()
     job.set_stage(ProcessingStage.WRITING_FILES)
 
+    # Report progress
+    reporter = get_progress_reporter()
+    if reporter:
+        reporter.report_step(ProgressStep.WRITING_FILES, 85.0, "Writing markdown files...")
+
     try:
         # Ensure output directory exists
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -302,6 +326,11 @@ def process_obsidian_links(
         logger.warning(f"  [Job {job.video_id}] Files not written yet, skipping link processing")
         return job
 
+    # Report progress
+    reporter = get_progress_reporter()
+    if reporter:
+        reporter.report_step(ProgressStep.CREATING_LINKS, 88.0, "Creating cross-references...")
+
     try:
         logger.info(f"  [Job {job.video_id}] Adding cross-references...")
         obsidian_linker.process_file(job.notes_filepath)
@@ -349,6 +378,11 @@ def export_pdfs(
 
     stage_start = time.time()
     job.set_stage(ProcessingStage.EXPORTING_PDFS)
+
+    # Report progress
+    reporter = get_progress_reporter()
+    if reporter:
+        reporter.report_step(ProgressStep.EXPORTING_PDF, 90.0, "Exporting to PDF...")
 
     try:
         # Create pdfs/ subdirectory
@@ -419,6 +453,11 @@ def process_video_job(
     start_time = time.time()
     job.start_time = start_time
 
+    # Report starting
+    reporter = get_progress_reporter()
+    if reporter:
+        reporter.report_step(ProgressStep.STARTING, 10.0, "Starting processing...")
+
     try:
         logger.info(f"\n{'='*60}")
         logger.debug(f"Processing Job: {job.video_id}")
@@ -454,6 +493,16 @@ def process_video_job(
         logger.success(f"  ✓ Job completed in {job.processing_duration:.1f}s")
         logger.info(f"{'='*60}\n")
 
+        # Report completion
+        reporter = get_progress_reporter()
+        if reporter and job.notes_filepath:
+            reporter.report_complete(
+                output_path=str(job.notes_filepath),
+                duration_seconds=job.processing_duration,
+                video_id=job.video_id,
+                video_title=job.video_title
+            )
+
         # Log job if logger provided
         if components.get('job_logger'):
             components['job_logger'].log_job(job)
@@ -467,6 +516,11 @@ def process_video_job(
 
         logger.error(f"  ✗ Job failed: {e}")
         logger.info(f"{'='*60}\n")
+
+        # Report error
+        reporter = get_progress_reporter()
+        if reporter:
+            reporter.report_error(str(e), step=job.current_stage.value if job.current_stage else None)
 
         # Log failed job if logger provided
         if components.get('job_logger'):
