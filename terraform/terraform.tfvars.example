@@ -1,0 +1,57 @@
+# Example Terraform variables file
+# Copy this file to terraform.tfvars and fill in your values
+# terraform.tfvars is gitignored for security
+
+# AWS Configuration
+aws_region  = "us-east-1"
+environment = "dev"
+
+# Project Configuration
+project_name = "ytstudybuddy"
+
+# API Keys (REQUIRED)
+claude_api_key = "sk-ant-xxxxx"
+
+# Stripe Configuration (REQUIRED for payments)
+stripe_secret_key      = "sk_test_xxxxx"
+stripe_publishable_key = "pk_test_xxxxx"
+stripe_webhook_secret  = "whsec_xxxxx"
+
+# Google OAuth (OPTIONAL)
+google_oauth_client_id     = ""
+google_oauth_client_secret = ""
+
+# GitHub OAuth (OPTIONAL)
+github_oauth_client_id     = ""
+github_oauth_client_secret = ""
+
+# Discord OAuth (OPTIONAL)
+discord_oauth_client_id     = ""
+discord_oauth_client_secret = ""
+
+# Domain Configuration (OPTIONAL)
+domain_name           = ""  # e.g., "ytstudybuddy.com"
+cognito_domain_prefix = ""  # e.g., "ytstudybuddy-auth"
+
+# Lambda Configuration
+lambda_timeout     = 300  # seconds
+lambda_memory_size = 512  # MB
+lambda_runtime     = "python3.13"
+
+# Monitoring
+enable_api_logging  = true
+log_retention_days  = 30
+
+# SQS Configuration
+sqs_visibility_timeout = 900   # seconds (15 minutes)
+sqs_message_retention  = 1209600  # seconds (14 days)
+
+# Credits Configuration
+free_tier_credits = 10
+
+# Additional Tags (OPTIONAL)
+tags = {
+  Owner       = "your-name"
+  CostCenter  = "engineering"
+  Terraform   = "true"
+}
