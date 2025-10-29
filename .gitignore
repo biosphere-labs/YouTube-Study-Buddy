@@ -38,3 +38,9 @@ dist-electron/
 *.dmg
 *.exe
 *.msi
+
+# Feature branch worktrees (code is on feature branches, these are just working directories)
+# react-frontend/ - Code is on feature/react-frontend branch
+# cli-json-output/ - Code is on feature/cli-json-output branch
+cli-json-output/
+react-frontend/
