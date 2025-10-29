@@ -1,0 +1,26 @@
+# Build artifacts
+build/
+*.zip
+cli-layer.zip
+
+# Layer ARN reference
+layer-arn.txt
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

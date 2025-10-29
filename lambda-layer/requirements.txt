@@ -1,0 +1,42 @@
+# Lambda layer requirements for yt-study-buddy
+# These are the core dependencies needed for the CLI to run in Lambda
+
+# YouTube transcript fetching
+youtube-transcript-api>=0.6.2
+yt-dlp>=2025.9.26
+
+# AI integration
+anthropic>=0.25.0
+
+# HTTP and networking
+requests>=2.31.0
+urllib3>=2.0.0
+PySocks>=1.7.1
+
+# Environment management
+python-dotenv>=1.0.0
+
+# Tor circuit management
+stem>=1.8.0
+
+# String matching for auto-categorization
+fuzzywuzzy>=0.18.0
+python-Levenshtein>=0.21.0
+
+# ML for embeddings and auto-categorization
+scikit-learn>=1.3.0
+scipy>=1.11.0
+sentence-transformers>=2.2.0
+
+# Logging
+loguru>=0.7.0
+
+# PDF export (optional, adds significant size)
+# weasyprint>=60.0
+# markdown2>=2.4.0
+
+# Note: The following are NOT needed in Lambda and should be excluded:
+# - jupyter, notebook, ipykernel (interactive notebooks)
+# - matplotlib, seaborn (visualization)
+# - streamlit (web app)
+# - pytest (testing)
