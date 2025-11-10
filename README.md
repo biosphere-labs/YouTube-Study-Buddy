@@ -2,6 +2,41 @@
 
 Learning from educational YouTube videos and want to maximize retention and build meaningful connections? **YT Study Buddy** transforms any YouTube video into structured study notes with intelligent cross-referencing that builds your personal knowledge graph over time, turning scattered video content into an interconnected learning system.
 
+## 🏗️ Architecture Overview
+
+This project is organized into **5 separate repositories** for modularity, scalability, and ease of deployment:
+
+1. **[YouTube-Studdy-Buddy](https://github.com/yourusername/YouTube-Studdy-Buddy)** (This Repository) - Core CLI Package
+   - Standalone command-line tool for local use
+   - Python package installable via pip/uv
+   - Can run in Docker or as a systemd service
+
+2. **[ytsb-Backend](https://github.com/yourusername/ytsb-Backend)** - Business Logic Package
+   - Service classes for video processing, notes, credits, MindMesh
+   - Shared utilities for DynamoDB, S3, and authentication
+   - Python 3.12+ compatible for Lambda deployment
+
+3. **[YouTube-Study-Buddy-Infrastructure](https://github.com/yourusername/YouTube-Study-Buddy-Infrastructure)** - AWS Deployment
+   - Terraform infrastructure as code (IaC)
+   - Lambda function deployment scripts
+   - DynamoDB, S3, API Gateway, CloudFront, Cognito configuration
+
+4. **[YouTube-Study-Buddy-Frontend](https://github.com/yourusername/YouTube-Study-Buddy-Frontend)** - Web Application
+   - Next.js React application
+   - Cognito authentication integration
+   - Deployed to S3 + CloudFront
+
+5. **[YouTube-Study-Buddy-Docs](https://github.com/yourusername/YouTube-Study-Buddy-Docs)** - Documentation
+   - API documentation
+   - Deployment guides
+   - Architecture decision records
+
+### Deployment Options
+
+- **Local/Docker**: Use this repository directly (see Quick Start below)
+- **AWS Serverless**: Deploy via Infrastructure repository for scalable cloud hosting
+- **Self-Hosted**: Run as systemd service or in your own infrastructure
+
 ## 🧠 The Science: Active Learning vs Passive Watching
 
 **Traditional passive note-taking** often leads to the "illusion of competence" – where learners feel they understand content simply because they've transcribed it. YT Study Buddy implements research-backed learning principles:
