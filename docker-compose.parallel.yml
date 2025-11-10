@@ -1,0 +1,138 @@
+version: '3.8'
+
+# Multi-Tor instance setup for parallel processing
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.parallel.yml up -d
+#
+# This extends the base docker-compose.yml with 5 total Tor instances:
+# - tor-proxy (existing): ports 9050, 9051
+# - tor-proxy-2: ports 9052, 9053
+# - tor-proxy-3: ports 9054, 9055
+# - tor-proxy-4: ports 9056, 9057
+# - tor-proxy-5: ports 9058, 9059
+#
+# Each instance gets its own:
+# - SOCKS5 port (9050, 9052, 9054, 9056, 9058)
+# - Control port (9051, 9053, 9055, 9057, 9059)
+# - Tor data volume (independent circuits/state)
+#
+# This enables true parallel processing with --workers up to 5
+
+services:
+  # Tor instance 2
+  tor-proxy-2:
+    image: dperson/torproxy:latest
+    container_name: ytstudybuddy-tor-proxy-2
+    restart: unless-stopped
+    ports:
+      - "9052:9050"  # SOCKS5 proxy
+      - "9053:9051"  # Control port
+    environment:
+      - LOCATION=US
+    volumes:
+      - tor-data-2:/var/lib/tor
+    healthcheck:
+      test: ["CMD", "curl", "-x", "socks5://localhost:9050", "https://check.torproject.org", "-s", "-o", "/dev/null", "-w", "%{http_code}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Tor instance 3
+  tor-proxy-3:
+    image: dperson/torproxy:latest
+    container_name: ytstudybuddy-tor-proxy-3
+    restart: unless-stopped
+    ports:
+      - "9054:9050"  # SOCKS5 proxy
+      - "9055:9051"  # Control port
+    environment:
+      - LOCATION=US
+    volumes:
+      - tor-data-3:/var/lib/tor
+    healthcheck:
+      test: ["CMD", "curl", "-x", "socks5://localhost:9050", "https://check.torproject.org", "-s", "-o", "/dev/null", "-w", "%{http_code}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Tor instance 4
+  tor-proxy-4:
+    image: dperson/torproxy:latest
+    container_name: ytstudybuddy-tor-proxy-4
+    restart: unless-stopped
+    ports:
+      - "9056:9050"  # SOCKS5 proxy
+      - "9057:9051"  # Control port
+    environment:
+      - LOCATION=US
+    volumes:
+      - tor-data-4:/var/lib/tor
+    healthcheck:
+      test: ["CMD", "curl", "-x", "socks5://localhost:9050", "https://check.torproject.org", "-s", "-o", "/dev/null", "-w", "%{http_code}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Tor instance 5
+  tor-proxy-5:
+    image: dperson/torproxy:latest
+    container_name: ytstudybuddy-tor-proxy-5
+    restart: unless-stopped
+    ports:
+      - "9058:9050"  # SOCKS5 proxy
+      - "9059:9051"  # Control port
+    environment:
+      - LOCATION=US
+    volumes:
+      - tor-data-5:/var/lib/tor
+    healthcheck:
+      test: ["CMD", "curl", "-x", "socks5://localhost:9050", "https://check.torproject.org", "-s", "-o", "/dev/null", "-w", "%{http_code}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  tor-data-2:
+    driver: local
+  tor-data-3:
+    driver: local
+  tor-data-4:
+    driver: local
+  tor-data-5:
+    driver: local
+
+# USAGE:
+# ======
+# 1. Start all Tor instances:
+#    docker-compose -f docker-compose.yml -f docker-compose.parallel.yml up -d
+#
+# 2. Check they're running:
+#    docker ps | grep tor-proxy
+#
+# 3. Test connectivity:
+#    curl -x socks5://127.0.0.1:9050 https://api.ipify.org  # Instance 1
+#    curl -x socks5://127.0.0.1:9052 https://api.ipify.org  # Instance 2
+#    curl -x socks5://127.0.0.1:9054 https://api.ipify.org  # Instance 3
+#
+# 4. Use with CLI:
+#    uv run yt-study-buddy --parallel --workers 5 --file urls.txt
+#
+# 5. Stop instances:
+#    docker-compose -f docker-compose.yml -f docker-compose.parallel.yml down
+#
+# BENEFITS:
+# =========
+# - Each worker gets dedicated Tor instance
+# - True parallel processing (no circuit sharing)
+# - Each instance can rotate independently
+# - Better performance and isolation
+# - Up to 5x speedup with 5 workers
+#
+# RESOURCE USAGE:
+# ===============
+# Each Tor instance uses ~50-100MB RAM
+# 5 instances = ~250-500MB RAM total
+# CPU usage is minimal when idle
