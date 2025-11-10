@@ -36,3 +36,4 @@ dist-electron/
 *.dmg
 *.exe
 *.msi
+backlogpad

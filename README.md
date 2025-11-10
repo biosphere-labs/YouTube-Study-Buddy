@@ -72,7 +72,6 @@ cat notes/processing_log.json | jq '.'
 ### Core Capabilities
 - 🤖 **AI-Powered Notes** - Claude Sonnet 4.5 generates comprehensive study materials
 - 📝 **Learning Assessments** - Automatic quiz generation with gap analysis
-- 🔄 **Automatic Retry** - 15-minute retry system for failed jobs
 - 🏷️ **Auto-Categorization** - ML-based subject detection
 - 📊 **Knowledge Graph** - Cross-reference related concepts
 - 📄 **PDF Export** - Multiple themes (Obsidian, Academic, Minimal)
@@ -99,26 +98,6 @@ tar czf notes-backup.tar.gz notes/
 
 # Restore notes
 tar xzf notes-backup.tar.gz
-```
-
-## Retry System
-
-Failed jobs automatically retry every 15 minutes.
-
-### Usage
-
-```bash
-# Check retry status
-python retry_failed_jobs.py --status
-
-# Retry all eligible jobs once
-python retry_failed_jobs.py
-
-# Continuous monitoring (recommended)
-python retry_failed_jobs.py --watch
-
-# Custom interval (30 minutes)
-python retry_failed_jobs.py --watch --interval 30
 ```
 
 ## File Organization
@@ -183,10 +162,6 @@ The Streamlit UI shows:
 - **3 Workers:** ~54% faster than sequential
 - **Job Logging:** Complete audit trail
 
-### Retry System Impact
-- **Without Retry:** 60% failure rate (temporary blocks)
-- **With Retry:** ~90% eventual success rate
-
 ## Development
 
 ```bash
@@ -195,9 +170,6 @@ uv sync
 
 # Run tests
 uv run pytest
-
-# Development mode with source mounting
-docker-compose -f docker-compose.dev.yml up --build
 ```
 
 ## License
