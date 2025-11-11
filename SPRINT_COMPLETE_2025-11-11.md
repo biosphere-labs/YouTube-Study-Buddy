@@ -164,12 +164,13 @@ Successfully completed the repository separation and AWS deployment sprint. The 
 **Resources:** 151 AWS resources defined
 **Scripts:** deploy-all.sh, deploy-infrastructure.sh, deploy-lambda.sh, deploy-frontend.sh
 
-### 4. YouTube-Study-Buddy-Frontend (Next.js Application)
-**Purpose:** React/Next.js frontend application
-**Latest Commit:** ee140b6 - docs(phase2): Add Phase 2 migration summary and update README
-**Architecture:** Pure frontend with API client
+### 4. YouTube-Study-Buddy-Frontend (React+Vite Application)
+**Purpose:** Pure React frontend application (SPA)
+**Latest Commit:** [To be updated after commit]
+**Architecture:** React 19 + Vite 7 + React Router 7
+**Build Tool:** Vite (fast, modern bundler)
 **Authentication:** AWS Cognito with Amplify
-**Status:** Infrastructure deployed, build incomplete (dependency issues)
+**Status:** ✅ Working - Next.js app removed, consolidated to React+Vite
 
 ### 5. mindmesh-app/mindmesh (Note-Taking Library)
 **Purpose:** React library for canvas-based note-taking
@@ -234,19 +235,22 @@ Successfully completed the repository separation and AWS deployment sprint. The 
 
 ## Known Issues & Next Steps
 
-### Frontend Build Incomplete ⚠️
+### Frontend Consolidation ✅ COMPLETE (2025-11-11)
 
-**Issue:** Next.js application build failed
-**Cause:** Missing `next-auth` dependency in package.json
-**Impact:** CloudFront serves empty S3 bucket (returns 403)
-**Status:** Infrastructure ready, application build incomplete
+**Issue:** Duplicate frontend applications (Next.js and React+Vite)
+**Resolution:** Removed Next.js app, consolidated to single React+Vite frontend
+**Changes:**
+- ✅ Deleted `nextjs-app/` directory
+- ✅ Updated deployment script to use `frontend/` (Vite build)
+- ✅ Updated README with React+Vite architecture
+- ✅ Build output: `frontend/dist/` for S3 deployment
 
-**Fix Required:**
+**Deployment Command:**
 ```bash
-cd YouTube-Study-Buddy-Frontend/nextjs-app
-npm install next-auth aws-amplify
+cd YouTube-Study-Buddy-Frontend/frontend
+npm install
 npm run build
-aws s3 sync out/ s3://ytstudybuddy-dev-frontend/
+aws s3 sync dist/ s3://ytstudybuddy-dev-frontend/
 ```
 
 ### Lambda Functions Using Placeholder Code
