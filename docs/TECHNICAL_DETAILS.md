@@ -416,15 +416,6 @@ workflow.add_conditional_edges(
 
 ---
 
-## Related Documentation
-
-- [LangGraph Migration Guide](LANGGRAPH_MIGRATION.md) - Full migration details
-- [LangSmith Quick Start](LANGSMITH_QUICK_START.md) - 3-step tracing setup
-- [LangSmith Tracing Guide](LANGSMITH_TRACING.md) - Comprehensive tracing guide
-- [Migration Summary](MIGRATION_SUMMARY.md) - Quick reference
-
----
-
 ## Contributing
 
 See main README for contribution guidelines.
