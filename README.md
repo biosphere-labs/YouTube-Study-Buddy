@@ -1,41 +1,8 @@
 # YouTube Study Buddy
 
-Learning from educational YouTube videos and want to maximize retention and build meaningful connections? **YT Study Buddy** transforms any YouTube video into structured study notes with intelligent cross-referencing that builds your personal knowledge graph over time, turning scattered video content into an interconnected learning system.
+Learning from educational YouTube videos and want to maximize retention? **YT Study Buddy** transforms passive video watching into active learning by generating structured study notes with intelligent cross-referencing and targeted assessment questions. The system builds your personal knowledge graph over time, connecting concepts across videos, while quiz-style assessments test understanding beyond surface-level recall—turning scattered video content into an interconnected learning system that actually improves retention.
 
-## 🏗️ Architecture Overview
-
-This project is organized into **5 separate repositories** for modularity, scalability, and ease of deployment:
-
-1. **[YouTube-Studdy-Buddy](https://github.com/yourusername/YouTube-Studdy-Buddy)** (This Repository) - Core CLI Package
-   - Standalone command-line tool for local use
-   - Python package installable via pip/uv
-   - Can run in Docker or as a systemd service
-
-2. **[ytsb-Backend](https://github.com/yourusername/ytsb-Backend)** - Business Logic Package
-   - Service classes for video processing, notes, credits, MindMesh
-   - Shared utilities for DynamoDB, S3, and authentication
-   - Python 3.12+ compatible for Lambda deployment
-
-3. **[YouTube-Study-Buddy-Infrastructure](https://github.com/yourusername/YouTube-Study-Buddy-Infrastructure)** - AWS Deployment
-   - Terraform infrastructure as code (IaC)
-   - Lambda function deployment scripts
-   - DynamoDB, S3, API Gateway, CloudFront, Cognito configuration
-
-4. **[YouTube-Study-Buddy-Frontend](https://github.com/yourusername/YouTube-Study-Buddy-Frontend)** - Web Application
-   - Next.js React application
-   - Cognito authentication integration
-   - Deployed to S3 + CloudFront
-
-5. **[YouTube-Study-Buddy-Docs](https://github.com/yourusername/YouTube-Study-Buddy-Docs)** - Documentation
-   - API documentation
-   - Deployment guides
-   - Architecture decision records
-
-### Deployment Options
-
-- **Local/Docker**: Use this repository directly (see Quick Start below)
-- **AWS Serverless**: Deploy via Infrastructure repository for scalable cloud hosting
-- **Self-Hosted**: Run as systemd service or in your own infrastructure
+This repository contains the **open-source CLI package** for self-hosted use. A managed web application will be available as a subscription service (launching mid-December 2025).
 
 ## 🧠 The Science: Active Learning vs Passive Watching
 
@@ -49,58 +16,23 @@ This project is organized into **5 separate repositories** for modularity, scala
 
 **Result:** Instead of passive consumption, you get an active learning system with notes AND assessment questions that test understanding beyond surface-level recall.
 
-## 💰 Free vs Paid Alternatives
+## 📦 Available Options
 
-**Paid ($10-50+/month):** NoteGPT, Notta, Eightify, Maestra – all require subscriptions for full features
+### Open Source CLI (This Repository)
+- **Free and open source** - Self-hosted on your own infrastructure
+- Outputs Markdown files compatible with Obsidian for personal knowledge management
+- Includes Streamlit web interface (via Docker) for local browser-based processing
+- Full AI-powered note generation and assessments
+- Requires technical setup (Python, Claude API key)
+- Complete control over your data and processing
+- Ideal for developers, researchers, and self-hosters
 
-**Free (Limited):** Basic transcripts, no AI analysis, no cross-referencing, no assessments
-
-**YT Study Buddy:** Completely free with AI-powered notes, learning assessments, auto-categorization, and knowledge graph building. No subscriptions, no limits.
-
-## Quick Start
-
-### Using Docker (Recommended)
-
-```bash
-# 1. Set your Claude API key in .env
-echo "CLAUDE_API_KEY=your_key_here" > .env
-
-# 2. Start services
-docker-compose up -d
-
-# 3. Open browser
-open http://localhost:8501
-```
-
-### Quick Start - Streamlit Web Interface
-
-```bash
-# Simple way - use the startup script
-./start_streamlit.sh
-
-# Or manually with uv
-unset VIRTUAL_ENV  # Clear any conflicting venv
-uv run python -m streamlit run streamlit_app.py
-```
-
-### Using CLI (Local Development)
-
-```bash
-# Install dependencies first
-uv sync
-
-# Sequential processing
-uv run yt-study-buddy https://youtu.be/VIDEO_ID
-
-# Parallel processing (3 workers)
-uv run yt-study-buddy --parallel --workers 3 \
-  https://youtu.be/VIDEO1 \
-  https://youtu.be/VIDEO2 \
-  https://youtu.be/VIDEO3
-
-# View processing logs
-cat notes/processing_log.json | jq '.'
-```
+### Managed Web Application (Coming Mid-December 2025)
+- **Subscription-based service** - No setup required
+- Interactive assessments directly in the browser
+- MindMesh integration - browser-based knowledge graph visualization and navigation
+- Automatic updates and maintenance
+- Ideal for students and educators who want a ready-to-use solution
 
 ## Features
 
@@ -111,101 +43,45 @@ cat notes/processing_log.json | jq '.'
 - 📊 **Knowledge Graph** - Cross-reference related concepts
 - 📄 **PDF Export** - Multiple themes (Obsidian, Academic, Minimal)
 
-## Docker Setup
+**[Technical Details](docs/TECHNICAL_DETAILS.md)** - LangGraph workflow, Docker setup, development guide
 
-### Volumes
+## 🏗️ Architecture Overview
 
-The docker-compose configuration uses volumes for data persistence:
+The complete YouTube Study Buddy system is organized into **4 separate repositories** for modularity, scalability, and separation of concerns:
 
-1. **`./notes`** (bind mount) - Study notes output
-   - Appears on host at `./notes/`
-   - Organized by subject
-   - Contains markdown files and PDFs
+1. **Core CLI Package** (This Repository - Open Source)
+   - Standalone command-line tool for local use
+   - Python package installable via pip/uv
+   - Can run in Docker or as a systemd service
+   - LangGraph-powered workflow with automatic checkpointing
 
-### Managing Data
+2. **Backend Package**
+   - Service classes for video processing, notes generation, and user management
+   - Shared utilities for DynamoDB, S3, and authentication
+   - Monthly subscription management
+   - Python 3.12+ compatible for AWS Lambda deployment
 
-```bash
-# View processing log
-cat notes/processing_log.json | jq '.'
+3. **Infrastructure**
+   - Terraform infrastructure as code (IaC)
+   - AWS Lambda function deployment
+   - DynamoDB, S3, API Gateway, CloudFront, Cognito configuration
+   - Serverless architecture for scalability
 
-# Backup notes
-tar czf notes-backup.tar.gz notes/
+4. **Web Application** (In Development)
+   - React application
+   - Cognito authentication with Google sign-in
+   - Browser-based interface for subscription users
+   - Interactive assessments that adapt based on your responses to facilitate deeper learning
 
-# Restore notes
-tar xzf notes-backup.tar.gz
-```
+> **Note:** Only the CLI package (this repository) is open source. The managed web application, backend services, and infrastructure will be part of the subscription service launching mid-December 2025.
 
-## File Organization
+### Processing Workflow
 
-```
-notes/
-├── processing_log.json           # Complete job history
-├── AI/
-│   ├── video_title_1.md
-│   ├── Assessment_video_title_1.md
-│   └── pdfs/
-│       └── video_title_1.pdf
-└── Programming/
-    └── ...
-```
+The CLI uses a LangGraph-powered workflow for deterministic, resumable processing:
 
-## Processing Log
+![Workflow Diagram](docs/workflow_diagram.png)
 
-Every job (success/failure) logged to `notes/processing_log.json`:
-
-```json
-{
-  "video_id": "abc123",
-  "worker_id": 2,
-  "success": true,
-  "processing_duration": 58.8,
-  "retry_count": 0,
-  "timings": {
-    "fetch_transcript": 5.2,
-    "generate_notes": 20.3,
-    "generate_assessment": 28.1,
-    "write_files": 0.7
-  },
-  "error": null
-}
-```
-
-### Query Examples
-
-```bash
-# Failed jobs only
-cat notes/processing_log.json | jq '.[] | select(.success == false)'
-
-# Average processing time
-cat notes/processing_log.json | jq '[.[] | select(.success) | .processing_duration] | add / length'
-```
-
-## Web Interface
-
-The Streamlit UI shows:
-
-- **Process Videos** - Batch processing with playlist extraction
-- **Results** - Knowledge graph and cross-references
-- **Logs** - Processing history with failure details
-  - Human-readable timestamps ("2 hours ago")
-  - Failure reasons
-  - Retry count
-
-## Performance
-
-### Parallel Processing
-- **3 Workers:** ~54% faster than sequential
-- **Job Logging:** Complete audit trail
-
-## Development
-
-```bash
-# Install dependencies
-uv sync
-
-# Run tests
-uv run pytest
-```
+Each video processes through conditional nodes based on your configuration (auto-categorization, assessments, PDF export).
 
 ## License
 

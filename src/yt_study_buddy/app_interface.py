@@ -9,8 +9,6 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 from .cli import YouTubeStudyNotes
-from .video_job import create_job_from_url
-from .processing_pipeline import process_video_job
 
 
 @dataclass

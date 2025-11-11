@@ -7,7 +7,6 @@
 .idea/
 
 # Project specific
-docs/
 scripts/
 urls.txt
 test_urls.txt

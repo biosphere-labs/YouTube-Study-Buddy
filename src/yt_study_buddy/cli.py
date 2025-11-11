@@ -21,7 +21,7 @@ from .job_logger import create_default_logger
 from .knowledge_graph import KnowledgeGraph
 from .obsidian_linker import ObsidianLinker
 from .parallel_processor import ParallelVideoProcessor, ProcessingResult, ProcessingMetrics
-from .processing_pipeline import process_video_job
+from .langgraph_workflow import process_video_with_langgraph
 from .study_notes_generator import StudyNotesGenerator
 from .video_job import create_job_from_url
 from .video_processor import VideoProcessor
@@ -154,62 +154,12 @@ class YouTubeStudyNotes:
                 error="Invalid YouTube URL"
             )
 
-        # Handle auto-categorization - need to fetch transcript first
-        current_subject = self.subject
-        current_output_dir = self.output_dir
-
-        # Pre-fetch transcript and title if auto-categorization is enabled
-        # This avoids double-fetching (once for categorization, once in pipeline)
-        pre_fetched_transcript = None
-        pre_fetched_title = None
-
-        if self.auto_categorizer and not self.subject:
-            try:
-                logger.info("Fetching transcript for auto-categorization...")
-                pre_fetched_transcript = processor.get_transcript(video_id)
-                pre_fetched_title = processor.get_video_title(video_id, worker_id=worker_id)
-
-                logger.info("Auto-categorizing video content...")
-                detected_subject = self.auto_categorizer.categorize_video(
-                    pre_fetched_transcript['transcript'], pre_fetched_title, self.base_dir
-                )
-                logger.info(f"Detected subject: {detected_subject}")
-
-                current_subject = detected_subject
-                current_output_dir = os.path.join(self.base_dir, detected_subject)
-
-                # Update components with new subject (thread-safe)
-                with self._kg_lock:
-                    self.knowledge_graph = KnowledgeGraph(self.base_dir, detected_subject, self.global_context)
-                    self.obsidian_linker = ObsidianLinker(self.base_dir, detected_subject, self.global_context)
-
-            except Exception as e:
-                logger.error(f"Auto-categorization failed: {e}, using base directory")
-                current_subject = None
-                current_output_dir = self.base_dir
-                # Clear pre-fetched data on categorization failure
-                pre_fetched_transcript = None
-                pre_fetched_title = None
-
         logger.info(f"\nFound video ID: {video_id}")
-        if current_subject:
-            logger.info(f"Subject: {current_subject}")
+        if self.subject:
+            logger.info(f"Subject: {self.subject}")
             logger.info(f"Cross-reference scope: {'Global' if self.global_context else 'Subject-only'}")
 
-        # Create job object
-        job = create_job_from_url(url, video_id, subject=current_subject, worker_id=worker_id)
-
-        # If we pre-fetched for auto-categorization, populate job with that data
-        # This skips the fetch stage in the pipeline (avoiding double-fetch)
-        if pre_fetched_transcript and pre_fetched_title:
-            from .video_job import ProcessingStage
-            job.transcript = pre_fetched_transcript['transcript']
-            job.transcript_data = pre_fetched_transcript
-            job.video_title = pre_fetched_title
-            job.set_stage(ProcessingStage.TRANSCRIPT_FETCHED)
-            logger.debug("Using pre-fetched transcript from auto-categorization (skip fetch stage)")
-
-        # Build components dict for pipeline
+        # Build components dict for LangGraph workflow
         components = {
             'video_processor': processor,
             'notes_generator': self.notes_generator,
@@ -217,27 +167,44 @@ class YouTubeStudyNotes:
             'obsidian_linker': self.obsidian_linker,
             'pdf_exporter': self.pdf_exporter,
             'job_logger': self.job_logger,
-            'output_dir': Path(current_output_dir),
-            'filename_sanitizer': processor.sanitize_filename
+            'filename_sanitizer': processor.sanitize_filename,
+            'auto_categorizer': self.auto_categorizer,
+            'base_dir': self.base_dir
         }
 
-        # Process through stateless pipeline
+        # Process through LangGraph workflow
         try:
-            job = process_video_job(job, components)
+            final_state = process_video_with_langgraph(
+                url=url,
+                video_id=video_id,
+                components=components,
+                subject=self.subject,
+                auto_categorize=self.auto_categorize,
+                generate_assessment=self.generate_assessments,
+                export_pdf=self.export_pdfs,
+                worker_id=worker_id
+            )
+
+            # Update components with detected subject (if categorized)
+            if final_state.get('detected_subject'):
+                detected_subject = final_state['detected_subject']
+                with self._kg_lock:
+                    self.knowledge_graph = KnowledgeGraph(self.base_dir, detected_subject, self.global_context)
+                    self.obsidian_linker = ObsidianLinker(self.base_dir, detected_subject, self.global_context)
 
             # Update knowledge graph cache (thread-safe)
             with self._kg_lock:
                 self.knowledge_graph.refresh_cache()
 
-            # Convert job to ProcessingResult
+            # Convert state to ProcessingResult
             return ProcessingResult(
-                url=job.url,
-                video_id=job.video_id,
-                success=job.success,
-                title=job.video_title,
-                filepath=str(job.notes_filepath) if job.notes_filepath else None,
-                duration_seconds=job.processing_duration,
-                method=job.transcript_data.get('method', 'tor') if job.transcript_data else 'unknown'
+                url=final_state['url'],
+                video_id=final_state['video_id'],
+                success=final_state.get('completed', False),
+                title=final_state.get('video_title'),
+                filepath=final_state.get('notes_file_path'),
+                duration_seconds=final_state.get('processing_duration'),
+                method=final_state.get('transcript_data', {}).get('method', 'tor') if final_state.get('transcript_data') else 'unknown'
             )
 
         except Exception as e:
