@@ -1,8 +1,9 @@
 """
 Transcript provider interface and implementations.
 
-Uses Tor proxy EXCLUSIVELY for transcript fetching.
-Direct connections DO NOT WORK due to YouTube IP blocking.
+Supports both Tor proxy and direct connections:
+- Tor proxy (default): Recommended for high-volume use, bypasses IP blocks
+- Direct connection: For low-volume use (<50 videos/day from residential IPs)
 """
 import random
 import re
@@ -225,25 +226,156 @@ class TorTranscriptProvider(AbstractTranscriptProvider):
         logger.info("="*50)
 
 
+class DirectTranscriptProvider(AbstractTranscriptProvider):
+    """
+    Direct transcript provider - fetches transcripts without proxy.
+
+    Use cases:
+    - Low-volume personal use (<50 videos/day from residential IPs)
+    - Development/testing
+    - Faster processing when rate limits aren't a concern
+
+    Warning: May encounter rate limiting with high volume or from cloud IPs.
+    """
+
+    def __init__(self):
+        """Initialize direct transcript provider."""
+        self.stats = {
+            'direct_success': 0,
+            'direct_failure': 0,
+            'total_attempts': 0
+        }
+
+    def get_transcript(self, video_id: str) -> Dict[str, Any]:
+        """
+        Fetch transcript directly using youtube_transcript_api.
+
+        Args:
+            video_id: YouTube video ID
+
+        Returns:
+            Dictionary with transcript data
+
+        Raises:
+            Exception: If transcript fetch fails
+        """
+        self.stats['total_attempts'] += 1
+
+        try:
+            # Import here to avoid dependency issues if not installed
+            from youtube_transcript_api import YouTubeTranscriptApi
+
+            # Add small random delay to avoid appearing automated
+            time.sleep(random.uniform(0.5, 1.5))
+
+            # Fetch transcript directly
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+
+            # Format transcript text
+            transcript_text = ' '.join([entry['text'] for entry in transcript_list])
+
+            self.stats['direct_success'] += 1
+
+            return {
+                'text': transcript_text,
+                'length': len(transcript_text),
+                'method': 'direct',
+                'video_id': video_id
+            }
+
+        except Exception as e:
+            self.stats['direct_failure'] += 1
+
+            # Provide helpful error messages for common issues
+            error_msg = str(e).lower()
+            if "429" in error_msg or "too many requests" in error_msg or "rate limit" in error_msg:
+                raise Exception(
+                    f"Rate limit exceeded. YouTube is temporarily blocking your IP.\n"
+                    f"Solutions:\n"
+                    f"  1. Wait 15-30 minutes before retrying\n"
+                    f"  2. Remove --no-proxy flag to use Tor proxy\n"
+                    f"  3. Process fewer videos at once\n"
+                    f"Original error: {e}"
+                )
+            elif "transcripts are disabled" in error_msg or "no transcript" in error_msg:
+                raise Exception(
+                    f"This video does not have transcripts available.\n"
+                    f"Original error: {e}"
+                )
+            else:
+                raise Exception(f"Failed to fetch transcript: {e}")
+
+    def get_video_title(self, video_id: str) -> str:
+        """
+        Get video title using direct connection.
+
+        Args:
+            video_id: YouTube video ID
+
+        Returns:
+            Video title cleaned for filename use
+        """
+        try:
+            # Use requests to fetch video page and extract title
+            response = requests.get(f"https://www.youtube.com/watch?v={video_id}", timeout=10)
+            response.raise_for_status()
+
+            # Extract title from page HTML (simple regex approach)
+            import re
+            title_match = re.search(r'<title>(.+?)</title>', response.text)
+            if title_match:
+                title = title_match.group(1)
+                # Remove " - YouTube" suffix
+                title = title.replace(' - YouTube', '').strip()
+                # Clean for filename use
+                title = re.sub(r'[<>:"/\\|?*]', '_', title)
+                return title if title else f"Video_{video_id}"
+
+        except Exception as e:
+            logger.warning(f"Could not fetch video title directly: {e}")
+
+        return f"Video_{video_id}"
+
+    def print_stats(self):
+        """Print success rate statistics."""
+        total = self.stats['total_attempts']
+        if total == 0:
+            logger.debug("No attempts yet")
+            return
+
+        logger.info("\n" + "="*50)
+        logger.info("TRANSCRIPT FETCHING STATISTICS (DIRECT)")
+        logger.info("="*50)
+        logger.debug(f"Total attempts: {total}")
+        logger.success(f"Direct successes: {self.stats['direct_success']} ({self.stats['direct_success']/total*100:.1f}%)")
+        logger.error(f"Direct failures: {self.stats['direct_failure']} ({self.stats['direct_failure']/total*100:.1f}%)")
+        logger.info("="*50)
+
+
 # Factory function for creating providers
 def create_transcript_provider(provider_type: str = "tor", **kwargs) -> TranscriptProvider:
     """
     Factory function that returns a TranscriptProvider.
-    Uses Tor EXCLUSIVELY - direct connections don't work due to YouTube IP blocking.
 
     Args:
-        provider_type: Type of provider (must be 'tor', no other options work)
+        provider_type: Type of provider ('tor' or 'direct')
+            - 'tor' (default): Uses Tor proxy, recommended for high-volume use
+            - 'direct': Direct connection, for low-volume use (<50 videos/day)
         **kwargs: Additional arguments passed to provider constructor
-            - tor_host: Tor proxy host (default: '127.0.0.1')
-            - tor_port: Tor proxy port (default: 9050)
+            For 'tor':
+                - tor_host: Tor proxy host (default: '127.0.0.1')
+                - tor_port: Tor proxy port (default: 9050)
+            For 'direct': no additional arguments
 
     Returns:
-        TorTranscriptProvider instance
+        TranscriptProvider instance (TorTranscriptProvider or DirectTranscriptProvider)
     """
     if provider_type == "tor":
         return TorTranscriptProvider(**kwargs)
+    elif provider_type == "direct":
+        return DirectTranscriptProvider()
     else:
-        raise ValueError(f"Only 'tor' provider is supported (direct connections don't work). Got: {provider_type}")
+        raise ValueError(f"Unknown provider type: {provider_type}. Valid options: 'tor', 'direct'")
 
 
 # Type checking example
