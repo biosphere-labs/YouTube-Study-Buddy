@@ -534,3 +534,178 @@ When working in this repository, remember:
 4. **Output format matters** - MindMesh depends on consistent markdown format
 5. **Lambda constraints apply** - 15-minute timeout, 250MB package size, /tmp storage
 6. **Single responsibility** - Focus on video → notes transformation only
+
+---
+
+## ⚠️ CRITICAL ISSUE: Backend Integration Refactoring Required
+
+### Problem Statement
+
+**ARCHITECTURE MISMATCH**: The Lambda functions in the infrastructure repository are NOT using the `ytsb-backend` package as documented. This is a critical architectural issue that needs to be resolved.
+
+**Current Reality (WRONG):**
+- Lambda functions use `shared/utils.py` for business logic
+- The `ytsb-backend` package exists but Lambda functions don't import it
+- Code is duplicated between `shared/utils.py` and `ytsb_backend` package
+- Documentation describes an architecture that doesn't match the actual implementation
+
+**Required State (CORRECT):**
+- Lambda functions must import and use the `ytsb-backend` package
+- Business logic should live only in the backend package (single source of truth)
+- Lambda Layer must contain the `ytsb-backend` package
+- `shared/utils.py` should be eliminated or reduced to minimal Lambda-specific helpers
+
+### Evidence of the Problem
+
+**Current Lambda Handler (infrastructure repo):**
+```python
+# lambda/submit_video/handler.py (WRONG)
+from shared.utils import (
+    get_user_credits,
+    deduct_credits,
+    put_item,
+    send_sqs_message
+)
+```
+
+**Required Lambda Handler:**
+```python
+# lambda/submit_video/handler.py (CORRECT)
+from ytsb_backend.services.user_service import get_user_credits, deduct_credits
+from ytsb_backend.services.video_service import create_video, queue_video_for_processing
+from ytsb_backend.errors import InvalidYouTubeURL, InsufficientCredits
+```
+
+### Refactoring Action Plan
+
+#### Phase 1: Migrate Logic to Backend Package
+
+Move all business logic from `infrastructure/lambda/shared/utils.py` to appropriate services in `backend/src/ytsb_backend/services/`:
+
+| Current Location | Target Location | Functions |
+|-----------------|-----------------|-----------|
+| `shared/utils.py` | `services/user_service.py` | get_user_credits, deduct_credits, add_credits |
+| `shared/utils.py` | `services/video_service.py` | create_video, update_video_status, list_videos |
+| `shared/utils.py` | `services/note_service.py` | save_note, get_note |
+| `shared/utils.py` | `services/workspace_service.py` | save_workspace, load_workspace, file operations |
+| `shared/utils.py` | `services/queue_service.py` | send_to_processing_queue |
+| `shared/utils.py` | `utils/dynamodb.py` | get_item, put_item, update_item (keep as utilities) |
+| `shared/utils.py` | `utils/s3.py` | upload_to_s3, get_from_s3 (keep as utilities) |
+
+#### Phase 2: Build Lambda Layer with Backend Package
+
+```bash
+cd youtube-buddy-infrastructure/lambda-layer
+
+# Install backend package into layer
+pip install -t python/ ../../youtube-buddy-backend-workspace/youtube-buddy-backend/
+
+# Create layer zip
+zip -r ytsb-backend-layer.zip python/
+
+# Update Terraform to deploy layer and attach to all Lambda functions
+```
+
+#### Phase 3: Update Lambda Handlers
+
+Refactor ALL 11 Lambda functions to import from `ytsb_backend`:
+
+**Example Refactor (submit_video):**
+```python
+# BEFORE
+from shared.utils import get_user_credits, deduct_credits
+
+def lambda_handler(event, context):
+    credits = get_user_credits(user_id)
+    deduct_credits(user_id, 1)
+
+# AFTER
+from ytsb_backend.services.user_service import get_user_credits, deduct_credits
+from ytsb_backend.errors import InsufficientCredits
+
+def lambda_handler(event, context):
+    try:
+        credits = get_user_credits(user_id)
+        if credits < 1:
+            raise InsufficientCredits("Need 1 credit")
+        deduct_credits(user_id, 1)
+    except InsufficientCredits as e:
+        return {'statusCode': 402, 'body': str(e)}
+```
+
+**Lambda Functions to Update:**
+1. `submit_video/` - Video submission
+2. `list_videos/` - List user videos
+3. `get_video/` - Get video details
+4. `get_note/` - Get study note
+5. `process_video/` - Main processor (SQS triggered)
+6. `mindmesh_workspace_load/` - Load workspace
+7. `mindmesh_workspace_save/` - Save workspace
+8. `mindmesh_file_create/` - Create file
+9. `mindmesh_file_update/` - Update file
+10. `mindmesh_file_delete/` - Delete file
+11. `stripe_webhook/` - Payment webhook
+
+#### Phase 4: Testing
+
+```bash
+# Unit tests with moto mocking
+pytest lambda/*/tests/ -v
+
+# Local Lambda testing with SAM CLI
+sam local invoke --hook-name terraform submit_video -e test-events/submit.json
+
+# Integration tests with LocalStack (optional)
+docker-compose up localstack
+tflocal apply
+pytest tests/integration/
+```
+
+#### Phase 5: Deployment
+
+```bash
+cd youtube-buddy-infrastructure/terraform
+terraform init
+terraform plan  # Review changes to Lambda Layer
+terraform apply  # Deploy updated layer and functions
+```
+
+### Verification Checklist
+
+After completing refactoring:
+
+- [ ] Backend package services contain all business logic (no duplicates in shared/)
+- [ ] Lambda Layer contains `ytsb_backend` package with all dependencies
+- [ ] All 11 Lambda functions import from `ytsb_backend` (not shared/utils)
+- [ ] `shared/utils.py` deleted or contains only Lambda-specific response helpers
+- [ ] Unit tests pass with backend package imports
+- [ ] SAM CLI local testing works
+- [ ] Lambda functions execute successfully in AWS
+- [ ] No import errors in CloudWatch logs
+- [ ] Infrastructure ARCHITECTURE.md updated to reflect reality
+
+### Estimated Effort
+
+- **Phase 1** (Migrate to Backend): 4-6 hours
+- **Phase 2** (Build Layer): 2-3 hours
+- **Phase 3** (Update Handlers): 6-10 hours
+- **Phase 4** (Testing): 4-6 hours
+- **Phase 5** (Deployment): 2-3 hours
+
+**Total**: 18-28 hours (2.5-3.5 days of focused work)
+
+### Why This Matters
+
+1. **Eliminates Code Duplication**: Single source of truth for business logic
+2. **Improves Testability**: Backend package can be tested independently
+3. **Enforces Architecture**: Matches documented design patterns
+4. **Enables Reusability**: Backend logic can be used in other contexts
+5. **Simplifies Maintenance**: Changes in one place propagate everywhere
+
+### Related Documentation
+
+- Backend package: `youtube-buddy-backend/ARCHITECTURE.md`
+- Infrastructure: `youtube-buddy-infrastructure/ARCHITECTURE.md`
+- Both documents describe the intended integration pattern
+
+**This refactoring is critical for maintaining a clean, testable, and maintainable codebase.**
