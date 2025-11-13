@@ -36,3 +36,4 @@ dist-electron/
 *.exe
 *.msi
 backlogpad
+.claude/
