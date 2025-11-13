@@ -702,10 +702,156 @@ After completing refactoring:
 4. **Enables Reusability**: Backend logic can be used in other contexts
 5. **Simplifies Maintenance**: Changes in one place propagate everywhere
 
-### Related Documentation
+### Backend Package Architecture (Reference)
 
-- Backend package: `youtube-buddy-backend/ARCHITECTURE.md`
-- Infrastructure: `youtube-buddy-infrastructure/ARCHITECTURE.md`
-- Both documents describe the intended integration pattern
+Since the backend repository is separate, here's a summary of its structure for context:
+
+#### Package Structure: `ytsb-backend`
+```
+ytsb-backend/src/ytsb_backend/
+├── config/              # Configuration management
+│   ├── settings.py      # Pydantic settings (AWS region, table names, etc.)
+│   └── aws_config.py    # AWS resource names/ARNs
+├── models/              # Pydantic data models
+│   ├── video.py         # Video(video_id, user_id, url, status, title, ...)
+│   ├── user.py          # User(user_id, email, credits, ...)
+│   ├── note.py          # Note(note_id, video_id, content, s3_uri, ...)
+│   └── workspace.py     # Workspace(workspace_id, user_id, files, ...)
+├── services/            # Business logic services
+│   ├── video_service.py     # create_video, get_video, update_video_status, list_user_videos
+│   ├── user_service.py      # get_user_credits, deduct_credits, add_credits
+│   ├── note_service.py      # save_note, get_note, format_note_for_mindmesh
+│   ├── workspace_service.py # save_workspace, load_workspace, file CRUD
+│   └── auth_service.py      # verify_jwt_token, extract_user_id_from_event
+├── errors/              # Custom exceptions
+│   ├── base.py          # YTSBError (base class)
+│   ├── validation.py    # InvalidYouTubeURL, ValidationError
+│   └── aws_errors.py    # InsufficientCredits, UserNotFoundError, DynamoDBError
+└── utils/               # AWS utility functions
+    ├── dynamodb.py      # get_item, put_item, update_item, query_items
+    ├── s3.py            # upload_to_s3, get_from_s3, generate_presigned_url
+    ├── sqs.py           # send_message, receive_messages
+    └── validators.py    # validate_youtube_url, validate_video_id
+```
+
+#### Example Service Implementation
+```python
+# ytsb_backend/services/user_service.py
+from ytsb_backend.models.user import User
+from ytsb_backend.utils.dynamodb import get_item, update_item
+from ytsb_backend.errors import UserNotFoundError, InsufficientCredits
+
+def get_user_credits(user_id: str) -> int:
+    """Get user's available credits from DynamoDB."""
+    user_data = get_item('users', {'user_id': user_id})
+    if not user_data:
+        raise UserNotFoundError(f"User {user_id} not found")
+    user = User(**user_data)
+    return user.credits
+
+def deduct_credits(user_id: str, amount: int) -> None:
+    """Deduct credits from user account."""
+    credits = get_user_credits(user_id)
+    if credits < amount:
+        raise InsufficientCredits(f"Need {amount} credits, have {credits}")
+    update_item('users', {'user_id': user_id}, {'credits': credits - amount})
+```
+
+### Infrastructure Architecture (Reference)
+
+The infrastructure repository contains 11 Lambda functions that should use the backend package:
+
+#### Lambda Functions (All in `youtube-buddy-infrastructure/lambda/`)
+1. **submit_video/** - Submit YouTube URL, validate, check credits, queue in SQS
+2. **list_videos/** - Query DynamoDB for user's videos
+3. **get_video/** - Get specific video details
+4. **get_note/** - Retrieve generated note from S3
+5. **process_video/** - SQS-triggered processor (uses this CLI + backend)
+6. **mindmesh_workspace_load/** - Load MindMesh workspace from S3
+7. **mindmesh_workspace_save/** - Save MindMesh workspace to S3
+8. **mindmesh_file_create/** - Create file in workspace
+9. **mindmesh_file_update/** - Update file in workspace
+10. **mindmesh_file_delete/** - Delete file from workspace
+11. **stripe_webhook/** - Handle payment events, add credits
+
+#### Current Problem: Lambda Functions Use shared/utils.py Instead
+```python
+# CURRENT (WRONG): lambda/submit_video/handler.py
+from shared.utils import (
+    get_user_credits,      # ❌ Duplicated code
+    deduct_credits,        # ❌ Duplicated code
+    put_item,              # ❌ Should be in backend utils
+    send_sqs_message       # ❌ Should be in backend utils
+)
+```
+
+#### Required Pattern: Lambda Functions Should Import Backend
+```python
+# CORRECT: lambda/submit_video/handler.py
+from ytsb_backend.services.user_service import get_user_credits, deduct_credits
+from ytsb_backend.services.video_service import create_video, queue_video_for_processing
+from ytsb_backend.errors import InvalidYouTubeURL, InsufficientCredits
+
+def lambda_handler(event, context):
+    try:
+        credits = get_user_credits(user_id)
+        if credits < 1:
+            raise InsufficientCredits("Need 1 credit")
+        deduct_credits(user_id, 1)
+        video = create_video(user_id, url)
+        queue_video_for_processing(video.video_id, url, user_id)
+    except InsufficientCredits as e:
+        return {'statusCode': 402, 'body': str(e)}
+```
+
+#### Lambda Layer Structure (How Backend Should Be Deployed)
+```
+lambda-layer/
+├── ytsb-backend-layer.zip
+└── python/
+    └── ytsb_backend/        # Backend package installed here
+        ├── config/
+        ├── models/
+        ├── services/
+        ├── errors/
+        └── utils/
+```
+
+#### Terraform Configuration (How Layer Should Be Attached)
+```hcl
+# terraform/lambda.tf
+resource "aws_lambda_layer_version" "ytsb_backend" {
+  filename            = "../lambda-layer/ytsb-backend-layer.zip"
+  layer_name          = "ytsb-backend-layer"
+  compatible_runtimes = ["python3.12"]
+}
+
+resource "aws_lambda_function" "submit_video" {
+  # ... other config ...
+  layers = [aws_lambda_layer_version.ytsb_backend.arn]
+}
+```
+
+### Why This Architecture Matters
+
+**Single Source of Truth**:
+- Business logic lives in ONE place: `ytsb-backend` package
+- Lambda functions are thin wrappers that call backend services
+- No code duplication between Lambda functions
+
+**Testability**:
+- Backend package can be tested independently with pytest
+- Lambda handlers become simple and easy to test
+- Mock backend services in Lambda tests
+
+**Maintainability**:
+- Change business logic once in backend package
+- All Lambda functions automatically get the update (via Layer)
+- Clear separation: Lambda = HTTP handling, Backend = business logic
+
+**Reusability**:
+- Backend package can be used in other contexts (CLI, scripts, other Lambdas)
+- Standard Python package that follows best practices
+- Pydantic models ensure data consistency
 
 **This refactoring is critical for maintaining a clean, testable, and maintainable codebase.**
