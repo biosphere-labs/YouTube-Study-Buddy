@@ -1088,3 +1088,906 @@ After the fix is complete:
 - [ ] Error messages are clear and helpful
 - [ ] PDF export still works (if enabled)
 - [ ] UI is clean (no vestigial parallel processing controls)
+
+---
+
+## 🔌 Plugin System Architecture for Private Extensions
+
+### Overview
+
+The YouTube Study Buddy CLI uses a **declarative LangGraph workflow** that can be extended with a plugin system to add private or proprietary features without modifying the open source codebase. This architecture enables:
+
+- **Private features** (e.g., LinkedIn storyboard generation) in separate repositories
+- **Zero coupling** between open source and proprietary code
+- **Clean separation** of concerns
+- **Easy maintenance** of both public and private codebases
+
+**Use Case**: Generate LinkedIn carousel storyboards from study notes for social media marketing, keeping this feature private while using the open source CLI as a foundation.
+
+### Design Goals
+
+1. **Generic Plugin Framework**: Plugin system has no knowledge of specific plugins (no hardcoded behavior)
+2. **Dynamic Loading**: Plugins loaded from configuration file at runtime
+3. **State Extension**: Plugins can add custom fields to workflow state
+4. **Error Isolation**: Plugin failures don't break core workflow
+5. **Zero Open Source Coupling**: No LinkedIn-specific (or any plugin-specific) code in public repo
+
+### Current LangGraph Workflow Structure
+
+#### Workflow Files
+
+- **Workflow Definition**: `src/yt_study_buddy/langgraph_workflow.py`
+- **State Schema**: `src/yt_study_buddy/workflow_state.py`
+- **Node Implementations**: `src/yt_study_buddy/workflow_nodes.py`
+
+#### Workflow Nodes (8 Total)
+
+The workflow is a linear pipeline with conditional branches:
+
+1. **`categorize`** (optional) - Auto-categorize video by subject
+2. **`fetch_transcript`** - Fetch YouTube transcript and title
+3. **`generate_notes`** - Generate study notes via Claude API
+4. **`generate_assessment`** (optional) - Create assessment questions
+5. **`write_files`** - Write markdown files to disk
+6. **`obsidian_links`** - Process wiki-style links
+7. **`export_pdf`** (optional) - Export to PDF
+8. **`log_job`** - Log completion to processing_log.json
+
+#### Workflow Flow
+
+```
+Entry → [categorize?] → fetch_transcript → generate_notes
+     → [PLUGIN HOOK POINT]
+     → [assessment?] → write_files → obsidian_links
+     → [export_pdf?] → log_job → END
+```
+
+**Conditional Edges**:
+- `should_categorize()`: Lines 34-39 in langgraph_workflow.py
+- `should_generate_assessment()`: Lines 42-46
+- `should_export_pdf()`: Lines 49-53
+- **[NEW]** `should_run_plugins()`: To be added
+
+### State Schema - Data Available to Plugins
+
+The `VideoProcessingState` (defined in `workflow_state.py`) uses `TypedDict` with `total=False`, which allows plugins to add custom fields at runtime without schema changes.
+
+**Data Available When Plugin Runs** (after `generate_notes` node):
+
+```python
+state = {
+    # Video identification
+    'url': str,                    # Original YouTube URL
+    'video_id': str,               # YouTube video ID
+    'video_title': str,            # Video title
+
+    # Content
+    'transcript': str,             # Full video transcript
+    'study_notes': str,            # Generated study notes (MARKDOWN)
+    'assessment': Optional[str],   # Assessment questions (if generated)
+
+    # Metadata
+    'subject': Optional[str],      # Subject/category
+    'detected_subject': Optional[str],  # Auto-detected subject
+    'linked_notes': list[str],     # Related notes
+
+    # File paths
+    'output_dir': str,             # Base output directory
+    'notes_file_path': Optional[str],   # Path to notes file
+
+    # Timing
+    'timings': dict[str, float],   # Per-stage performance metrics
+    'start_time': float,
+    'processing_duration': Optional[float],
+
+    # Configuration
+    'auto_categorize': bool,
+    'generate_assessment': bool,
+    'export_pdf': bool,
+
+    # [CUSTOM PLUGIN FIELDS CAN BE ADDED HERE]
+    # Examples:
+    # 'linkedin_storyboard_path': str,
+    # 'linkedin_video_path': str,
+    # 'plugin_timings': dict[str, float]
+}
+```
+
+### Plugin Hook Point
+
+**Recommended Location**: After `generate_notes` node (before `generate_assessment`)
+
+**Current Code** (Lines 148-156 in `langgraph_workflow.py`):
+```python
+# After fetch, generate notes
+workflow.add_edge("fetch_transcript", "generate_notes")
+
+# Conditional: Should we generate assessment?
+workflow.add_conditional_edges(
+    "generate_notes",
+    should_generate_assessment,
+    {
+        "generate_assessment": "generate_assessment",
+        "skip_assessment": "write_files"
+    }
+)
+```
+
+**Proposed Modification**:
+```python
+# After notes generation, run plugins
+workflow.add_conditional_edges(
+    "generate_notes",
+    should_run_plugins,  # NEW
+    {
+        "run_plugins": "run_plugins",  # NEW NODE
+        "skip_plugins": "generate_assessment"  # or skip to write_files
+    }
+)
+
+# After plugins, continue to assessment
+workflow.add_conditional_edges(
+    "run_plugins",
+    should_generate_assessment,
+    {
+        "generate_assessment": "generate_assessment",
+        "skip_assessment": "write_files"
+    }
+)
+```
+
+**Why This Location**:
+- Study notes are complete with full content
+- Transcript and metadata are available
+- Can still influence downstream processing
+- Early enough to affect assessment generation if needed
+- Late enough to have all content generated
+
+### Plugin System Implementation
+
+#### File 1: `src/yt_study_buddy/plugin_system.py` (NEW)
+
+Complete implementation of the plugin framework:
+
+```python
+"""
+Plugin system for YouTube Study Buddy.
+
+Allows external plugins to hook into the processing workflow.
+"""
+
+import importlib
+import json
+from pathlib import Path
+from typing import Callable, Dict, Any, Optional
+from loguru import logger
+from .workflow_state import VideoProcessingState
+
+
+class PluginRegistry:
+    """Registry for workflow plugins."""
+
+    def __init__(self):
+        self._plugins: Dict[str, Dict[str, Any]] = {}
+
+    def register(
+        self,
+        name: str,
+        plugin_func: Callable[[VideoProcessingState], VideoProcessingState],
+        config: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Register a plugin function.
+
+        Args:
+            name: Plugin name
+            plugin_func: Function that takes and returns VideoProcessingState
+            config: Optional plugin configuration
+        """
+        self._plugins[name] = {
+            'func': plugin_func,
+            'config': config or {}
+        }
+        logger.debug(f"Registered plugin: {name}")
+
+    def load_from_config(self, config_path: Optional[Path] = None):
+        """
+        Load plugins from configuration file.
+
+        Args:
+            config_path: Path to plugins.json
+                        (default: ~/.youtube-buddy/plugins.json)
+        """
+        if config_path is None:
+            config_path = Path.home() / '.youtube-buddy' / 'plugins.json'
+
+        if not config_path.exists():
+            logger.debug(f"No plugin config found at {config_path}")
+            return
+
+        try:
+            config = json.loads(config_path.read_text())
+
+            if not config.get('enabled', False):
+                logger.debug("Plugins disabled in config")
+                return
+
+            for plugin_spec in config.get('plugins', []):
+                name = plugin_spec['name']
+                module_path = plugin_spec['module']
+                func_name = plugin_spec['function']
+                plugin_config = plugin_spec.get('config', {})
+
+                # Dynamic import
+                module = importlib.import_module(module_path)
+                plugin_func = getattr(module, func_name)
+
+                self.register(name, plugin_func, plugin_config)
+                logger.info(f"Loaded plugin: {name}")
+
+        except Exception as e:
+            logger.error(f"Failed to load plugins from {config_path}: {e}")
+
+    def get_plugins(self) -> Dict[str, Dict[str, Any]]:
+        """Get all registered plugins."""
+        return self._plugins
+
+
+def run_plugins_node(
+    state: VideoProcessingState,
+    plugin_registry: PluginRegistry
+) -> VideoProcessingState:
+    """
+    Execute all registered plugins.
+
+    Args:
+        state: Current workflow state
+        plugin_registry: Registry of plugins to execute
+
+    Returns:
+        Updated state after all plugins run
+    """
+    plugins = plugin_registry.get_plugins()
+
+    if not plugins:
+        logger.debug("No plugins registered, skipping")
+        return state
+
+    logger.info(f"🔌 Running {len(plugins)} workflow plugin(s)...")
+
+    for plugin_name, plugin_data in plugins.items():
+        try:
+            logger.info(f"  Running plugin: {plugin_name}")
+
+            plugin_func = plugin_data['func']
+            plugin_config = plugin_data['config']
+
+            # Pass config to state if plugin needs it
+            state['_current_plugin_config'] = plugin_config
+
+            # Execute plugin
+            state = plugin_func(state)
+
+            # Clean up temp config
+            state.pop('_current_plugin_config', None)
+
+            logger.info(f"  ✓ Plugin {plugin_name} completed")
+
+        except Exception as e:
+            logger.error(f"  ✗ Plugin {plugin_name} failed: {e}")
+            # Non-critical - continue with other plugins
+            state.setdefault('plugin_errors', []).append({
+                'plugin': plugin_name,
+                'error': str(e)
+            })
+
+    return state
+
+
+def should_run_plugins(state: VideoProcessingState) -> str:
+    """
+    Conditional edge: Should plugins run?
+
+    Args:
+        state: Current workflow state
+
+    Returns:
+        "run_plugins" or "skip_plugins"
+    """
+    if state.get('plugins_enabled', False):
+        return "run_plugins"
+    return "skip_plugins"
+```
+
+#### File 2: Modify `src/yt_study_buddy/langgraph_workflow.py`
+
+**Add Import** (after line 1):
+```python
+from .plugin_system import PluginRegistry, run_plugins_node, should_run_plugins
+```
+
+**Add Plugin Node** (after line 129, with other nodes):
+```python
+workflow.add_node("run_plugins", run_plugins_node)
+```
+
+**Modify Edges** (replace lines 148-156):
+```python
+# After fetch, generate notes
+workflow.add_edge("fetch_transcript", "generate_notes")
+
+# After notes, conditionally run plugins
+workflow.add_conditional_edges(
+    "generate_notes",
+    should_run_plugins,
+    {
+        "run_plugins": "run_plugins",
+        "skip_plugins": "generate_assessment"
+    }
+)
+
+# After plugins (or skip), conditionally generate assessment
+workflow.add_conditional_edges(
+    "run_plugins",
+    should_generate_assessment,
+    {
+        "generate_assessment": "generate_assessment",
+        "skip_assessment": "write_files"
+    }
+)
+
+# If plugins skipped, go straight to assessment decision
+workflow.add_conditional_edges(
+    "skip_plugins",
+    should_generate_assessment,
+    {
+        "generate_assessment": "generate_assessment",
+        "skip_assessment": "write_files"
+    }
+)
+```
+
+**Pass Plugin Registry in Components** (modify lines around 119):
+```python
+def compile_workflow(components: dict) -> CompiledStateGraph:
+    """Compile the LangGraph workflow."""
+    workflow = StateGraph(VideoProcessingState)
+
+    # Extract plugin_registry from components
+    plugin_registry = components.get('plugin_registry')
+
+    # ... rest of function
+```
+
+#### File 3: Modify `src/yt_study_buddy/cli.py`
+
+**Add Import** (after line 1):
+```python
+from .plugin_system import PluginRegistry
+```
+
+**Add CLI Arguments** (around line 340):
+```python
+parser.add_argument('--enable-plugins', action='store_true',
+                   help='Enable workflow plugins')
+parser.add_argument('--plugins-config',
+                   help='Path to plugins configuration file')
+```
+
+**Initialize Plugin Registry** (in `main()` function, around line 367):
+```python
+def main():
+    # ... existing argument parsing ...
+
+    # Initialize plugin registry
+    plugin_registry = PluginRegistry()
+    if args.enable_plugins:
+        config_path = Path(args.plugins_config) if args.plugins_config else None
+        plugin_registry.load_from_config(config_path)
+
+    # Create app instance
+    app = YouTubeStudyNotes(
+        subject=args.subject,
+        generate_assessments=not args.no_assessments,
+        auto_categorize=not args.no_auto_categorize,
+        export_pdf=args.export_pdf,
+        plugins_enabled=args.enable_plugins,
+        plugin_registry=plugin_registry,
+        # ... other args
+    )
+```
+
+**Pass to YouTubeStudyNotes.__init__** (modify constructor):
+```python
+def __init__(
+    self,
+    subject=None,
+    global_context=None,
+    generate_assessments=True,
+    auto_categorize=True,
+    base_dir=None,
+    export_pdf=False,
+    pdf_theme='default',
+    plugins_enabled=False,  # NEW
+    plugin_registry=None    # NEW
+):
+    # ... existing initialization ...
+    self.plugins_enabled = plugins_enabled
+    self.plugin_registry = plugin_registry or PluginRegistry()
+```
+
+**Pass to Components** (around line 122):
+```python
+components = {
+    'video_processor': self.video_processor,
+    'notes_generator': self.notes_generator,
+    'assessment_generator': self.assessment_generator,
+    'obsidian_linker': self.obsidian_linker,
+    'pdf_exporter': self.pdf_exporter,
+    'job_logger': self.job_logger,
+    'filename_sanitizer': self.video_processor.sanitize_filename,
+    'auto_categorizer': self.auto_categorizer,
+    'base_dir': self.base_dir,
+    'plugin_registry': self.plugin_registry  # NEW
+}
+```
+
+**Pass plugins_enabled to State** (in `process_single_url`, around line 150):
+```python
+final_state = process_video_with_langgraph(
+    url=url,
+    video_id=video_id,
+    components=components,
+    subject=self.subject,
+    auto_categorize=self.auto_categorize,
+    generate_assessment=self.generate_assessments,
+    export_pdf=self.export_pdf,
+    plugins_enabled=self.plugins_enabled,  # NEW
+    worker_id=None
+)
+```
+
+**Update `process_video_with_langgraph` Signature** (in langgraph_workflow.py, around line 204):
+```python
+def process_video_with_langgraph(
+    url: str,
+    video_id: str,
+    components: dict,
+    subject: str = None,
+    auto_categorize: bool = True,
+    generate_assessment: bool = True,
+    export_pdf: bool = True,
+    plugins_enabled: bool = False,  # NEW
+    worker_id: int = None
+) -> VideoProcessingState:
+    # Add to initial_state
+    initial_state = {
+        'url': url,
+        'video_id': video_id,
+        'subject': subject,
+        'auto_categorize': auto_categorize,
+        'generate_assessment': generate_assessment,
+        'export_pdf': export_pdf,
+        'plugins_enabled': plugins_enabled,  # NEW
+        # ... rest of state
+    }
+```
+
+### Plugin Configuration File
+
+**Location**: `~/.youtube-buddy/plugins.json` (not committed to repo)
+
+**Example Configuration**:
+```json
+{
+  "enabled": true,
+  "plugins": [
+    {
+      "name": "linkedin_storyboard",
+      "module": "linkedin_storyboard_plugin.main",
+      "function": "linkedin_storyboard_plugin",
+      "config": {
+        "slides_count": 10,
+        "tone": "professional",
+        "generate_video": false
+      }
+    }
+  ]
+}
+```
+
+### Example Plugin: LinkedIn Storyboard (Private Repo)
+
+**Repository Structure** (private repo):
+```
+linkedin-storyboard-plugin/
+├── src/linkedin_storyboard_plugin/
+│   ├── __init__.py
+│   ├── main.py                    # Plugin entry point
+│   ├── storyboard_generator.py    # Claude API integration
+│   └── video_generator.py         # (Future) Video generation
+├── pyproject.toml
+├── README.md
+└── .gitignore
+```
+
+**Plugin Implementation** (`src/linkedin_storyboard_plugin/main.py`):
+
+```python
+"""
+LinkedIn Storyboard Plugin for YouTube Study Buddy.
+
+Generates LinkedIn carousel storyboards from study notes.
+"""
+
+import json
+from pathlib import Path
+from typing import Dict, Any
+from loguru import logger
+
+# Import from open source package
+try:
+    from yt_study_buddy.workflow_state import VideoProcessingState
+except ImportError:
+    # Type hint for development
+    VideoProcessingState = Dict[str, Any]
+
+
+def linkedin_storyboard_plugin(state: VideoProcessingState) -> VideoProcessingState:
+    """
+    Generate LinkedIn carousel storyboard from study notes.
+
+    Takes:
+        - state['study_notes']: Markdown study notes
+        - state['video_title']: Video title
+        - state['video_id']: YouTube video ID
+        - state['output_dir']: Output directory
+        - state['_current_plugin_config']: Plugin configuration
+
+    Adds to state:
+        - state['linkedin_storyboard_path']: Path to storyboard JSON
+        - state['linkedin_storyboard_generated']: True if successful
+
+    Returns:
+        Updated state
+    """
+    import anthropic
+    import os
+
+    logger.info("Generating LinkedIn storyboard...")
+
+    # Extract data from state
+    study_notes = state.get('study_notes', '')
+    video_title = state.get('video_title', 'Unknown')
+    video_id = state.get('video_id', '')
+    output_dir = Path(state.get('output_dir', 'notes'))
+    plugin_config = state.get('_current_plugin_config', {})
+
+    # Get config values
+    slides_count = plugin_config.get('slides_count', 10)
+    tone = plugin_config.get('tone', 'professional')
+
+    # Create output directory
+    storyboard_dir = output_dir / "linkedin_storyboards"
+    storyboard_dir.mkdir(exist_ok=True, parents=True)
+
+    # Generate storyboard using Claude
+    client = anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+
+    prompt = f"""Convert these study notes into a LinkedIn carousel storyboard.
+
+Video Title: {video_title}
+
+Study Notes:
+{study_notes}
+
+Requirements:
+- Create {slides_count} slides maximum
+- Tone: {tone}
+- Each slide should have:
+  - heading: Catchy heading (max 60 characters)
+  - bullet_points: 3-5 key points (short, punchy)
+  - visual_suggestion: Description of image/graphic to use
+  - linkedin_copy: Engaging post text for this slide
+
+Also provide:
+- suggested_hashtags: Relevant hashtags
+- suggested_post_intro: Opening text for LinkedIn post
+
+Return as valid JSON with this structure:
+{{
+  "slides": [
+    {{
+      "heading": "...",
+      "bullet_points": ["...", "..."],
+      "visual_suggestion": "...",
+      "linkedin_copy": "..."
+    }}
+  ],
+  "suggested_hashtags": ["#ai", "#learning"],
+  "suggested_post_intro": "..."
+}}
+"""
+
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=3000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        # Extract JSON from response
+        response_text = message.content[0].text
+
+        # Parse JSON (handle potential markdown code blocks)
+        if '```json' in response_text:
+            json_text = response_text.split('```json')[1].split('```')[0].strip()
+        elif '```' in response_text:
+            json_text = response_text.split('```')[1].split('```')[0].strip()
+        else:
+            json_text = response_text.strip()
+
+        storyboard_data = json.loads(json_text)
+
+        # Save storyboard JSON
+        storyboard_path = storyboard_dir / f"storyboard_{video_id}.json"
+        with open(storyboard_path, 'w') as f:
+            json.dump(storyboard_data, f, indent=2)
+
+        # Add to state
+        state['linkedin_storyboard_path'] = str(storyboard_path)
+        state['linkedin_storyboard_generated'] = True
+
+        logger.info(f"✓ LinkedIn storyboard saved to: {storyboard_path}")
+
+    except Exception as e:
+        logger.error(f"Failed to generate LinkedIn storyboard: {e}")
+        state['linkedin_storyboard_generated'] = False
+        state.setdefault('plugin_errors', []).append({
+            'plugin': 'linkedin_storyboard',
+            'error': str(e)
+        })
+
+    return state
+```
+
+**Package Configuration** (`pyproject.toml`):
+
+```toml
+[project]
+name = "linkedin-storyboard-plugin"
+version = "0.1.0"
+description = "LinkedIn carousel storyboard generator for YouTube Study Buddy"
+requires-python = ">=3.13"
+dependencies = [
+    "anthropic>=0.40.0",
+    "loguru>=0.7.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+```
+
+### Integration Flow
+
+```
+1. User runs CLI with plugins enabled:
+   $ youtube-study-buddy --enable-plugins https://youtube.com/watch?v=xyz
+
+2. CLI loads plugin configuration:
+   - Reads ~/.youtube-buddy/plugins.json
+   - Dynamically imports linkedin_storyboard_plugin.main
+   - Registers plugin in PluginRegistry
+
+3. LangGraph workflow executes:
+   categorize → fetch_transcript → generate_notes
+   → should_run_plugins() → run_plugins
+   → linkedin_storyboard_plugin(state)
+   → Plugin receives study notes
+   → Plugin calls Claude API for storyboard
+   → Plugin saves storyboard.json
+   → Plugin adds linkedin_storyboard_path to state
+   → continue to assessment/write_files...
+
+4. Final state contains:
+   - All standard fields (study_notes, video_title, etc.)
+   - linkedin_storyboard_path
+   - linkedin_storyboard_generated
+```
+
+### Configuration Methods
+
+#### Method 1: CLI Flag (Recommended)
+
+```bash
+youtube-study-buddy --enable-plugins https://youtube.com/watch?v=xyz
+```
+
+#### Method 2: Environment Variable
+
+```bash
+export YTSB_PLUGINS_ENABLED=true
+youtube-study-buddy https://youtube.com/watch?v=xyz
+```
+
+#### Method 3: Custom Config Path
+
+```bash
+youtube-study-buddy --enable-plugins --plugins-config /path/to/plugins.json <url>
+```
+
+### Benefits of Plugin Approach
+
+#### vs. Forking Open Source Repo
+
+| Aspect | Plugin System | Fork & Modify |
+|--------|--------------|---------------|
+| **Maintenance** | Pull open source updates easily | Must merge conflicts regularly |
+| **Coupling** | Zero coupling | Tightly coupled |
+| **Privacy** | Private code stays private | Risk of accidentally pushing private code |
+| **Contribution** | Can contribute plugin system to open source | Can't share fork |
+| **Testing** | Test plugins independently | Must test entire fork |
+| **Distribution** | Open source + private plugin packages | Single monolithic repo |
+
+#### vs. Separate Script
+
+| Aspect | Plugin System | Separate Script |
+|--------|--------------|-----------------|
+| **Integration** | Native workflow integration | Must parse markdown files |
+| **State Access** | Full state (transcript, metadata) | Only final output files |
+| **Error Handling** | Unified error handling | Separate error management |
+| **Timing** | Runs during processing | Runs after completion |
+| **UX** | Single command | Multiple commands |
+
+### Zero-Coupling Guarantees
+
+**Open Source Repo Has**:
+- ✅ Generic `PluginRegistry` class (no plugin names)
+- ✅ Generic `run_plugins_node()` function (calls registered plugins)
+- ✅ Generic `should_run_plugins()` conditional (checks state flag)
+- ✅ CLI flag `--enable-plugins` (no specific plugins mentioned)
+- ✅ Documentation on how to write plugins
+
+**Open Source Repo Does NOT Have**:
+- ❌ Any LinkedIn-specific code
+- ❌ Any hardcoded plugin names
+- ❌ Any knowledge of what plugins do
+- ❌ Any plugin-specific configuration
+- ❌ Any plugin-specific dependencies
+
+**Private Repo**:
+- Contains all LinkedIn-specific logic
+- Imports open source package as dependency
+- Can be updated independently
+- Never committed to public repo
+
+### Installation & Usage
+
+#### 1. Install Open Source Package
+
+```bash
+cd youtube-buddy-workspace/youtube-buddy
+uv pip install -e .
+```
+
+#### 2. Install Private Plugin
+
+```bash
+cd linkedin-storyboard-plugin
+uv pip install -e .
+```
+
+#### 3. Configure Plugin
+
+Create `~/.youtube-buddy/plugins.json`:
+```json
+{
+  "enabled": true,
+  "plugins": [
+    {
+      "name": "linkedin_storyboard",
+      "module": "linkedin_storyboard_plugin.main",
+      "function": "linkedin_storyboard_plugin",
+      "config": {
+        "slides_count": 10
+      }
+    }
+  ]
+}
+```
+
+#### 4. Run with Plugin
+
+```bash
+youtube-study-buddy --enable-plugins https://youtube.com/watch?v=xyz
+```
+
+Output:
+```
+notes/
+├── Computer Science/
+│   ├── Machine Learning Basics.md
+│   ├── linkedin_storyboards/
+│   │   └── storyboard_xyz123.json
+```
+
+### Testing Strategy
+
+#### Test 1: Plugin System Without Plugins
+
+```bash
+# Should work normally, just skip plugins
+youtube-study-buddy --enable-plugins https://youtube.com/watch?v=xyz
+```
+
+Expected: Normal processing, no errors
+
+#### Test 2: Plugin System With LinkedIn Plugin
+
+```bash
+# With plugin config file
+youtube-study-buddy --enable-plugins https://youtube.com/watch?v=xyz
+```
+
+Expected:
+- Study notes generated
+- Storyboard JSON generated
+- No errors
+
+#### Test 3: Plugin Error Doesn't Break Workflow
+
+```bash
+# If plugin fails (e.g., API key missing)
+unset ANTHROPIC_API_KEY
+youtube-study-buddy --enable-plugins https://youtube.com/watch?v=xyz
+```
+
+Expected:
+- Plugin error logged
+- Workflow continues
+- Study notes still generated
+- Core functionality unaffected
+
+### Future Extensions
+
+Once the plugin system is in place, other plugins can be added:
+
+- **Video Summary Plugin**: Generate short video summaries
+- **Anki Flashcard Plugin**: Convert notes to Anki deck
+- **Mind Map Plugin**: Generate mind maps from notes
+- **Translation Plugin**: Translate notes to other languages
+- **Audio Summary Plugin**: Generate podcast-style audio summaries
+
+All without modifying the open source codebase.
+
+### Estimated Implementation Time
+
+- **Plugin System (Open Source)**: 2-3 hours
+  - Create plugin_system.py: 1 hour
+  - Modify langgraph_workflow.py: 30 minutes
+  - Modify cli.py: 30 minutes
+  - Testing: 30 minutes
+  - Documentation: 30 minutes
+
+- **LinkedIn Plugin (Private)**: 2-3 hours
+  - Setup private repo: 30 minutes
+  - Implement plugin: 1.5 hours
+  - Testing: 30 minutes
+  - Refine prompt/output: 30 minutes
+
+- **Total**: 4-6 hours
+
+### Success Criteria
+
+After implementation:
+
+- [ ] Plugin system added to open source repo
+- [ ] No LinkedIn-specific code in open source
+- [ ] `--enable-plugins` CLI flag works
+- [ ] Plugins load from config file dynamically
+- [ ] LinkedIn plugin generates storyboard.json
+- [ ] Plugin errors don't break workflow
+- [ ] Can pull open source updates without conflicts
+- [ ] Private plugin stays in private repo
+- [ ] Documentation complete
