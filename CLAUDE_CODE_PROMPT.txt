@@ -1,0 +1,45 @@
+Please read ARCHITECTURE.md in this repository carefully, particularly the "Legacy Components (To Be Removed)" section.
+
+## Task: Remove Unused Parallel Processing Code
+
+This CLI tool was originally designed for standalone batch processing with worker pools and parallel execution. However, it is now primarily used as a library imported by AWS Lambda functions for single-video processing.
+
+**The Problem:**
+- AWS Lambda + SQS already provides concurrency and queuing
+- Each Lambda processes ONE video per invocation
+- The parallel processing infrastructure (worker pools, job queues, Tor coordinator) is NOT used by Lambda
+- This unused code increases Lambda package size and adds unnecessary complexity
+
+## Your Task
+
+1. **Analyze the codebase** and identify all parallel processing components:
+   - `parallel_processor.py` - Worker pool management
+   - `video_job.py` - Job queue logic (keep data models if Lambda uses them)
+   - `video_processor.py` - Multi-video coordinator (if it duplicates pipeline logic)
+   - Tor coordinator in `tor_transcript_fetcher.py` (keep base fetcher, remove coordinator)
+   - `docker-compose.parallel.yml` - Parallel Docker setup
+   - CLI flags: `--parallel`, `--workers` in `cli.py`
+   - Thread locks and worker factories in `cli.py`
+
+2. **Verify Lambda usage** by checking what components Lambda actually imports
+
+3. **Create a refactoring plan** that:
+   - Removes all parallel processing code
+   - Keeps core single-video processing pipeline
+   - Simplifies CLI to single-video mode only
+   - Updates documentation
+
+4. **Benefits of this refactoring:**
+   - Smaller Lambda package → faster cold starts
+   - Clearer code → easier maintenance
+   - No confusion about what code is actually used
+   - Prevents threading bugs in Lambda context
+
+5. **Core components to KEEP** (used by Lambda):
+   - `processing_pipeline.py` - Single video pipeline
+   - `langgraph_workflow.py` - Workflow orchestration
+   - `study_notes_generator.py` - AI generation
+   - `transcript_provider.py` - Transcript extraction
+   - `tor_transcript_fetcher.py` - Base Tor client (remove coordinator)
+
+Please analyze the codebase, create a detailed refactoring plan, and estimate the impact. Focus on making this a clean, simple, single-video processing library for Lambda.
