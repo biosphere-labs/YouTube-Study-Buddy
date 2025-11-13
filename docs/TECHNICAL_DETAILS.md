@@ -32,8 +32,11 @@ uv run python -m streamlit run streamlit_app.py
 # Install dependencies first
 uv sync
 
-# Sequential processing
+# Sequential processing (with Tor proxy - default)
 uv run yt-study-buddy https://youtu.be/VIDEO_ID
+
+# With direct connection (no proxy - for low-volume use)
+uv run yt-study-buddy --no-proxy https://youtu.be/VIDEO_ID
 
 # Parallel processing (3 workers)
 uv run yt-study-buddy --parallel --workers 3 \
@@ -44,6 +47,56 @@ uv run yt-study-buddy --parallel --workers 3 \
 # View processing logs
 cat notes/processing_log.json | jq '.'
 ```
+
+---
+
+## Proxy Configuration & Rate Limiting
+
+### Default: Tor Proxy (Recommended)
+
+By default, YT Study Buddy uses Tor proxy to avoid YouTube's IP-based rate limits. This is recommended for:
+- High-volume use (50+ videos/day)
+- Processing from cloud IPs (AWS, GCP, etc.)
+- Avoiding temporary IP blocks
+
+**Setup:**
+```bash
+# Using Docker (recommended)
+docker-compose up -d tor-proxy
+
+# Or install Tor locally
+# macOS: brew install tor && tor
+# Ubuntu: apt install tor && systemctl start tor
+```
+
+### Direct Connection (--no-proxy)
+
+For low-volume personal use, you can bypass Tor and use a direct connection:
+
+```bash
+# CLI flag
+uv run yt-study-buddy --no-proxy https://youtu.be/VIDEO_ID
+
+# Or environment variable
+export YTSB_USE_PROXY=false
+uv run yt-study-buddy https://youtu.be/VIDEO_ID
+```
+
+**Use direct connection when:**
+- Processing <50 videos/day from residential IPs
+- Development/testing
+- Faster processing is needed and rate limits aren't a concern
+
+**If you encounter rate limits:**
+1. Wait 15-30 minutes before retrying
+2. Remove `--no-proxy` flag to use Tor proxy
+3. Process fewer videos at once
+
+### Rate Limit Guidelines
+
+**Residential IPs:** ~100-500 requests before temporary blocks (15-30 min)
+**Cloud IPs:** Often blocked immediately
+**Safe rate:** ~5 requests per 10 seconds
 
 ---
 
@@ -361,6 +414,9 @@ CLAUDE_API_KEY=sk-ant-xxxxx
 # Optional
 SENTENCE_TRANSFORMER_MODEL=all-MiniLM-L6-v2
 GENERATE_NOTES_MODEL=claude-sonnet-4-5-20250929
+
+# Proxy Configuration (optional)
+YTSB_USE_PROXY=false  # Set to 'false' to use direct connection instead of Tor
 
 # LangSmith Tracing (optional)
 LANGSMITH_API_KEY=lsv2_pt_xxxxx
