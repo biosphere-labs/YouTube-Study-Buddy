@@ -36,7 +36,7 @@ class YouTubeStudyNotes:
 
     def __init__(self, subject=None, global_context=True, base_dir="notes",
                  generate_assessments=True, auto_categorize=True,
-                 export_pdf=False, pdf_theme='obsidian'):
+                 export_pdf=False, pdf_theme='obsidian', use_proxy=True):
         self.subject = subject
         self.global_context = global_context
         self.base_dir = base_dir
@@ -45,8 +45,11 @@ class YouTubeStudyNotes:
         self.auto_categorize = auto_categorize and not subject  # Only auto-categorize when no subject provided
         self.export_pdf = export_pdf
         self.pdf_theme = pdf_theme
+        self.use_proxy = use_proxy
 
-        self.video_processor = VideoProcessor("tor")
+        # Use direct connection if --no-proxy, otherwise use Tor (default)
+        provider_type = "tor" if use_proxy else "direct"
+        self.video_processor = VideoProcessor(provider_type)
         self.knowledge_graph = KnowledgeGraph(base_dir, subject, global_context)
         self.notes_generator = StudyNotesGenerator()
         self.obsidian_linker = ObsidianLinker(base_dir, subject, global_context)
@@ -180,12 +183,19 @@ class YouTubeStudyNotes:
             logger.info("YouTube is temporarily blocking requests. Solutions:")
             logger.info("1. Wait 15-30 minutes before trying again")
             logger.info("2. Process fewer videos at once")
-            logger.info("3. Ensure Tor proxy is running: docker-compose up -d tor-proxy")
+            if not self.use_proxy:
+                logger.info("3. Remove --no-proxy flag to use Tor proxy (bypasses IP blocks)")
+                logger.info("4. Run: docker-compose up -d tor-proxy")
+            else:
+                logger.info("3. Ensure Tor proxy is running: docker-compose up -d tor-proxy")
         else:
             logger.info("\nTroubleshooting:")
             logger.info("1. Check if the video has captions/subtitles enabled")
             logger.info("2. Some videos restrict transcript access")
-            logger.info("3. Ensure Tor proxy is running: docker-compose up -d tor-proxy")
+            if not self.use_proxy:
+                logger.info("3. Try removing --no-proxy flag to use Tor proxy")
+            else:
+                logger.info("3. Ensure Tor proxy is running: docker-compose up -d tor-proxy")
 
     def process_urls(self, urls):
         """Process a list of URLs sequentially."""
@@ -250,6 +260,7 @@ Options:
   --no-auto-categorize     Disable auto-categorization
   --export-pdf             Export notes to PDF with Obsidian-style formatting
   --pdf-theme <theme>      PDF theme: default, obsidian, academic, minimal (default: obsidian)
+  --no-proxy               Use direct IP connection instead of Tor (for <50 videos/day from residential IPs)
   --help, -h               Show this help message
 
 Examples:
@@ -268,8 +279,23 @@ Examples:
   # Export with academic theme
   youtube-study-buddy --export-pdf --pdf-theme academic --file urls.txt
 
+  # Use direct connection for low-volume personal use
+  youtube-study-buddy --no-proxy https://youtube.com/watch?v=xyz
+
 Performance:
   Processing time: ~60s per video (depends on video length and transcript complexity)
+
+Rate Limiting & Proxy Usage:
+  By default, Tor proxy is used to avoid YouTube's IP-based rate limits.
+  Use --no-proxy for:
+    - Low-volume use (<50 videos/day from residential IPs)
+    - Development/testing
+    - Faster processing when rate limits aren't a concern
+
+  If you hit rate limits with --no-proxy:
+    - Wait 15-30 minutes before retrying
+    - Remove --no-proxy flag to use Tor proxy
+    - Run: docker-compose up -d tor-proxy
 
 Playlist Extraction:
   # Extract URLs from a YouTube playlist using yt-dlp
@@ -310,6 +336,7 @@ def main():
     parser.add_argument('--export-pdf', action='store_true', help='Export notes to PDF (requires: uv pip install weasyprint markdown2)')
     parser.add_argument('--pdf-theme', default='obsidian', choices=['default', 'obsidian', 'academic', 'minimal'],
                        help='PDF theme style (default: obsidian)')
+    parser.add_argument('--no-proxy', action='store_true', help='Use direct IP connection instead of Tor (for <50 videos/day from residential IPs)')
     parser.add_argument('--debug-logging', action='store_true', help='Enable detailed debug logging to debug_logs/ directory')
     parser.add_argument('--help', '-h', action='store_true', help='Show help message')
 
@@ -326,7 +353,15 @@ def main():
         logger.success(f"✓ Debug logging enabled")
         logger.info(f"  Session log: {logger.session_log}")
         logger.info(f"  API log: {logger.api_log}")
-        
+
+    # Determine proxy usage: CLI flag takes precedence over environment variable
+    use_proxy = True  # Default to Tor proxy for safety
+    if args.no_proxy:
+        use_proxy = False
+        logger.info("⚠ Using direct IP connection (--no-proxy). Suitable for <50 videos/day from residential IPs.")
+    elif os.environ.get('YTSB_USE_PROXY', '').lower() == 'false':
+        use_proxy = False
+        logger.info("⚠ Using direct IP connection (YTSB_USE_PROXY=false). Suitable for <50 videos/day from residential IPs.")
 
     # Create app instance with configuration
     app = YouTubeStudyNotes(
@@ -335,7 +370,8 @@ def main():
         generate_assessments=not args.no_assessments,
         auto_categorize=not args.no_auto_categorize,
         export_pdf=args.export_pdf,
-        pdf_theme=args.pdf_theme
+        pdf_theme=args.pdf_theme,
+        use_proxy=use_proxy
     )
 
     # Collect URLs from either command line or file
