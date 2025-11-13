@@ -43,8 +43,6 @@ class StudyBuddyInterface:
         base_dir: str = "notes",
         generate_assessments: bool = True,
         auto_categorize: bool = True,
-        parallel: bool = False,
-        max_workers: int = 3,
         export_pdf: bool = False,
         pdf_theme: str = 'obsidian'
     ):
@@ -57,8 +55,6 @@ class StudyBuddyInterface:
             base_dir: Base directory for output
             generate_assessments: Generate learning assessments
             auto_categorize: Auto-detect subject categories
-            parallel: Enable parallel processing
-            max_workers: Number of parallel workers
             export_pdf: Export notes to PDF
             pdf_theme: PDF theme (obsidian, academic, minimal, default)
         """
@@ -68,8 +64,6 @@ class StudyBuddyInterface:
             base_dir=base_dir,
             generate_assessments=generate_assessments,
             auto_categorize=auto_categorize,
-            parallel=parallel,
-            max_workers=max_workers,
             export_pdf=export_pdf,
             pdf_theme=pdf_theme
         )
@@ -95,13 +89,12 @@ class StudyBuddyInterface:
         except Exception as e:
             return None, str(e)
 
-    def process_video(self, url: str, worker_id: int = 0) -> ProcessingResult:
+    def process_video(self, url: str) -> ProcessingResult:
         """
         Process a single YouTube video.
 
         Args:
             url: YouTube URL to process
-            worker_id: Worker ID for tracking (default: 0)
 
         Returns:
             ProcessingResult with outcome and details
@@ -118,19 +111,19 @@ class StudyBuddyInterface:
                 )
 
             # Use the stateless pipeline via CLI
-            result = self._cli.process_single_url(url, worker_id=worker_id)
+            result = self._cli.process_single_url(url)
 
-            # Convert to our interface result
+            # Convert to our interface result (result is now a dict)
             return ProcessingResult(
-                success=result.success,
-                video_id=result.video_id,
-                video_title=result.title,
-                url=result.url,
-                notes_filepath=Path(result.filepath) if result.filepath else None,
+                success=result['success'],
+                video_id=result['video_id'],
+                video_title=result.get('title'),
+                url=result['url'],
+                notes_filepath=Path(result['filepath']) if result.get('filepath') else None,
                 transcript_length=0,  # Not available in current result
                 related_notes_count=0,  # Not available in current result
-                processing_duration=result.duration_seconds,
-                error=result.error if hasattr(result, 'error') else None
+                processing_duration=result.get('duration_seconds', 0),
+                error=result.get('error')
             )
 
         except Exception as e:
@@ -143,7 +136,7 @@ class StudyBuddyInterface:
 
     def process_videos_batch(self, urls: List[str]) -> None:
         """
-        Process multiple videos (parallel or sequential based on settings).
+        Process multiple videos sequentially.
 
         Results are logged to processing_log.json automatically.
         Use get_job_log() to retrieve results after processing.
@@ -245,8 +238,6 @@ def create_interface(
     generate_assessments: bool = True,
     auto_categorize: bool = True,
     base_dir: str = "notes",
-    parallel: bool = False,
-    max_workers: int = 3,
     export_pdf: bool = False,
     pdf_theme: str = 'obsidian'
 ) -> StudyBuddyInterface:
@@ -261,8 +252,6 @@ def create_interface(
         generate_assessments: Generate learning assessments
         auto_categorize: Auto-detect subject
         base_dir: Base output directory
-        parallel: Enable parallel processing
-        max_workers: Number of workers
         export_pdf: Export to PDF
         pdf_theme: PDF theme name
 
@@ -275,8 +264,6 @@ def create_interface(
         base_dir=base_dir,
         generate_assessments=generate_assessments,
         auto_categorize=auto_categorize,
-        parallel=parallel,
-        max_workers=max_workers,
         export_pdf=export_pdf,
         pdf_theme=pdf_theme
     )
