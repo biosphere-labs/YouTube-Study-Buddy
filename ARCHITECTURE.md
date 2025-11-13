@@ -855,3 +855,236 @@ resource "aws_lambda_function" "submit_video" {
 - Pydantic models ensure data consistency
 
 **This refactoring is critical for maintaining a clean, testable, and maintainable codebase.**
+
+---
+
+## ⚠️ KNOWN ISSUE: Streamlit App Broken After LangGraph Migration
+
+### Problem Summary
+
+The Streamlit web interface (`streamlit_app.py`) is **broken** and throws `TypeError` exceptions after the migration from the old processing pipeline to LangGraph workflow. The app tries to use API signatures that no longer exist.
+
+### Root Cause
+
+**Before (Old Pipeline)**:
+- File: `src/yt_study_buddy/processing_pipeline.py`
+- Supported parallel processing with worker pools
+- Parameters: `parallel`, `max_workers`, `worker_id`
+
+**After (LangGraph Migration)**:
+- File: `src/yt_study_buddy/langgraph_workflow.py`
+- Declarative state machine workflow
+- **Removed** all parallel processing parameters
+- Each video is processed independently (no worker coordination)
+
+**The Problem**:
+- `app_interface.py` was supposed to shield the UI from internal changes
+- However, the interface itself changed when parallel parameters were removed
+- Streamlit app was never updated to match the new interface
+
+### Specific Errors
+
+#### Error 1: `create_processor()` called with removed parameters
+
+**Location**: `streamlit_app.py:742-743`
+
+```python
+# BROKEN CODE:
+processor = create_processor(
+    subject if subject else None,
+    global_context,
+    generate_assessments,
+    auto_categorize and not subject,
+    base_dir=output_base_dir,
+    parallel=use_parallel,           # ❌ Parameter doesn't exist anymore
+    max_workers=max_workers,         # ❌ Parameter doesn't exist anymore
+    export_pdf=export_pdf,
+    pdf_theme=pdf_theme
+)
+```
+
+**Current Signature** (from `app_interface.py:27-35`):
+```python
+def create_processor(
+    subject: Optional[str] = None,
+    global_context: Optional[str] = None,
+    generate_assessments: bool = True,
+    auto_categorize: bool = True,
+    base_dir: Optional[str] = None,
+    export_pdf: bool = False,
+    pdf_theme: str = 'default'
+) -> 'YouTubeStudyNotes':
+```
+
+#### Error 2: `process_video()` called with removed parameter
+
+**Location**: `streamlit_app.py:453`
+
+```python
+# BROKEN CODE:
+result = processor.process_video(url, worker_id=worker_id)  # ❌ worker_id doesn't exist
+```
+
+**Current Signature** (from `app_interface.py:48-50`):
+```python
+def process_video(self, video_url: str) -> Dict[str, Any]:
+    """Process a single video and return results"""
+    # No worker_id parameter
+```
+
+#### Error 3: Parallel processing code still present
+
+**Location**: `streamlit_app.py:762-780`
+
+```python
+# Code tries to process videos in parallel using ThreadPoolExecutor
+if use_parallel and len(urls) > 1:
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # ... parallel processing logic
+```
+
+**Problem**: After LangGraph migration, parallel processing should be handled by SQS + Lambda auto-scaling, not client-side threading.
+
+### Files Requiring Updates
+
+#### 1. `streamlit_app.py` (Primary fixes)
+
+**Line 742-743**: Remove `parallel` and `max_workers` parameters
+```python
+# BEFORE:
+processor = create_processor(
+    subject if subject else None,
+    global_context,
+    generate_assessments,
+    auto_categorize and not subject,
+    base_dir=output_base_dir,
+    parallel=use_parallel,           # REMOVE
+    max_workers=max_workers,         # REMOVE
+    export_pdf=export_pdf,
+    pdf_theme=pdf_theme
+)
+
+# AFTER:
+processor = create_processor(
+    subject if subject else None,
+    global_context,
+    generate_assessments,
+    auto_categorize and not subject,
+    base_dir=output_base_dir,
+    export_pdf=export_pdf,
+    pdf_theme=pdf_theme
+)
+```
+
+**Line 453**: Remove `worker_id` parameter
+```python
+# BEFORE:
+result = processor.process_video(url, worker_id=worker_id)
+
+# AFTER:
+result = processor.process_video(url)
+```
+
+**Lines 762-780**: Simplify to sequential processing only
+```python
+# BEFORE: Complex parallel/sequential logic with ThreadPoolExecutor
+
+# AFTER: Simple sequential processing
+for i, url in enumerate(urls, 1):
+    st.write(f"Processing video {i}/{len(urls)}: {url}")
+    try:
+        result = processor.process_video(url)
+        results.append(result)
+        st.success(f"✓ Completed: {result.get('title', 'Unknown')}")
+    except Exception as e:
+        st.error(f"✗ Failed: {str(e)}")
+        results.append({"url": url, "error": str(e)})
+```
+
+**Lines 612-637**: Remove commented-out parallel processing UI code
+- This code is already commented out but should be deleted entirely
+- It references the old parallel processing system
+
+#### 2. UI Cleanup (Optional but Recommended)
+
+**Remove Parallel Processing Settings**:
+- Lines 689-705: "Parallel Processing Settings" expander
+- These UI controls are no longer functional with LangGraph
+- Simplifies user experience
+
+### Why the Interface Shield Failed
+
+The `app_interface.py` module was designed to provide a stable API that wouldn't change when internals changed. However:
+
+1. **Parallel processing was a core feature** of the old design
+2. **Removing it changed the interface itself**, not just the implementation
+3. **The shield worked correctly** - it removed the parameters from its own API
+4. **But the UI wasn't updated** to match the new shield API
+
+This is a good example of why API changes need coordinated updates across all consumers, even with abstraction layers.
+
+### Testing After Fix
+
+After implementing the fixes:
+
+1. **Single Video Test**:
+   ```bash
+   uv run streamlit run streamlit_app.py
+   # Enter a single YouTube URL
+   # Verify it processes successfully
+   ```
+
+2. **Multiple Videos Test**:
+   ```bash
+   # Enter 3-5 YouTube URLs (one per line)
+   # Verify they process sequentially
+   # Check that progress updates correctly
+   ```
+
+3. **Error Handling Test**:
+   ```bash
+   # Try an invalid URL
+   # Verify error messages are helpful
+   ```
+
+4. **Export Test**:
+   ```bash
+   # Enable PDF export
+   # Process a video
+   # Verify PDF is generated correctly
+   ```
+
+### Migration Notes for Future Reference
+
+**What Changed in LangGraph Migration**:
+- Old: Imperative pipeline with manual state management
+- New: Declarative state graph with automatic state transitions
+- Old: Client-side parallel processing (ThreadPoolExecutor)
+- New: Sequential client processing (scaling handled by SQS + Lambda)
+- Old: Worker coordination via shared Tor instance
+- New: Each video is independent (no coordination needed)
+
+**Design Decision**:
+The LangGraph migration intentionally removed parallel processing from the CLI because:
+1. SQS + Lambda provides better scaling
+2. No need for complex worker coordination
+3. Simpler error handling (one video = one state machine)
+4. Easier to debug and monitor
+
+The Streamlit app should follow the same philosophy - process videos sequentially and let the backend handle scaling.
+
+### Estimated Fix Time
+
+- **Code changes**: 30-45 minutes
+- **Testing**: 30 minutes
+- **Total**: ~1.5 hours
+
+### Success Criteria
+
+After the fix is complete:
+- [ ] No `TypeError` exceptions when processing videos
+- [ ] Single video processing works correctly
+- [ ] Multiple videos process sequentially with progress updates
+- [ ] Error messages are clear and helpful
+- [ ] PDF export still works (if enabled)
+- [ ] UI is clean (no vestigial parallel processing controls)
