@@ -10,7 +10,6 @@ Usage:
 import argparse
 import os
 import sys
-import threading
 
 from pathlib import Path
 from loguru import logger
@@ -20,7 +19,6 @@ from .auto_categorizer import AutoCategorizer
 from .job_logger import create_default_logger
 from .knowledge_graph import KnowledgeGraph
 from .obsidian_linker import ObsidianLinker
-from .parallel_processor import ParallelVideoProcessor, ProcessingResult, ProcessingMetrics
 from .langgraph_workflow import process_video_with_langgraph
 from .study_notes_generator import StudyNotesGenerator
 from .video_job import create_job_from_url
@@ -38,15 +36,13 @@ class YouTubeStudyNotes:
 
     def __init__(self, subject=None, global_context=True, base_dir="notes",
                  generate_assessments=True, auto_categorize=True,
-                 parallel=False, max_workers=3, export_pdf=False, pdf_theme='obsidian'):
+                 export_pdf=False, pdf_theme='obsidian'):
         self.subject = subject
         self.global_context = global_context
         self.base_dir = base_dir
         self.output_dir = os.path.join(base_dir, subject) if subject else base_dir
         self.generate_assessments = generate_assessments
         self.auto_categorize = auto_categorize and not subject  # Only auto-categorize when no subject provided
-        self.parallel = parallel
-        self.max_workers = max_workers
         self.export_pdf = export_pdf
         self.pdf_theme = pdf_theme
 
@@ -54,19 +50,6 @@ class YouTubeStudyNotes:
         self.knowledge_graph = KnowledgeGraph(base_dir, subject, global_context)
         self.notes_generator = StudyNotesGenerator()
         self.obsidian_linker = ObsidianLinker(base_dir, subject, global_context)
-
-        # Initialize Tor coordinator for parallel processing
-        # Uses SingleTorCoordinator since we have only ONE Tor daemon
-        if parallel:
-            from .tor_transcript_fetcher import SingleTorCoordinator
-            self.tor_coordinator = SingleTorCoordinator(
-                tor_host='127.0.0.1',
-                tor_port=9050,
-                tor_control_port=9051,
-                cooldown_hours=1.0
-            )
-        else:
-            self.tor_coordinator = None
 
         # Initialize new components
         self.auto_categorizer = AutoCategorizer() if self.auto_categorize else None
@@ -85,23 +68,8 @@ class YouTubeStudyNotes:
         else:
             self.pdf_exporter = None
 
-        # Thread locks for parallel processing
-        self._file_lock = threading.Lock()
-        self._kg_lock = threading.Lock()
-
         # Job logger for tracking all processing results
         self.job_logger = create_default_logger(Path(self.base_dir))
-
-        # Unified processor: Always create ParallelVideoProcessor
-        # When parallel=False, max_workers=1 provides sequential behavior
-        self.parallel_processor = ParallelVideoProcessor(
-            max_workers=max_workers if parallel else 1,
-            rate_limit_delay=1.0,
-            sequential_delay=3.0
-        )
-
-        # Always create metrics for consistent tracking
-        self.metrics = ProcessingMetrics()
 
     def read_urls_from_file(self, filename='urls.txt'):
         """Read URLs from a text file, ignoring comments and empty lines."""
@@ -121,38 +89,26 @@ class YouTubeStudyNotes:
 
         return urls
 
-    def process_single_url(self, url, worker_processor=None, worker_id=None, tor_fetcher=None):
+    def process_single_url(self, url):
         """
         Process a single YouTube URL using stateless pipeline.
 
         Args:
             url: YouTube URL to process
-            worker_processor: Optional VideoProcessor instance for this worker.
-                            If None, uses self.video_processor (shared instance).
-            worker_id: Optional worker ID for logging/debugging
-            tor_fetcher: Optional TorTranscriptFetcher from pool (for parallel mode)
 
         Returns:
-            ProcessingResult with outcome
+            Dictionary with processing outcome
         """
-        # Use per-worker processor if provided, otherwise use shared instance
-        processor = worker_processor if worker_processor else self.video_processor
-
-        # If tor_fetcher provided from pool, inject it into the processor
-        if tor_fetcher and hasattr(processor, 'provider'):
-            if hasattr(processor.provider, 'tor_fetcher'):
-                processor.provider.tor_fetcher = tor_fetcher
-
         # Extract video ID
-        video_id = processor.get_video_id(url)
+        video_id = self.video_processor.get_video_id(url)
         if not video_id:
             logger.error(f"ERROR: Invalid YouTube URL: {url}")
-            return ProcessingResult(
-                url=url,
-                video_id="invalid",
-                success=False,
-                error="Invalid YouTube URL"
-            )
+            return {
+                'url': url,
+                'video_id': 'invalid',
+                'success': False,
+                'error': 'Invalid YouTube URL'
+            }
 
         logger.info(f"\nFound video ID: {video_id}")
         if self.subject:
@@ -161,13 +117,13 @@ class YouTubeStudyNotes:
 
         # Build components dict for LangGraph workflow
         components = {
-            'video_processor': processor,
+            'video_processor': self.video_processor,
             'notes_generator': self.notes_generator,
             'assessment_generator': self.assessment_generator,
             'obsidian_linker': self.obsidian_linker,
             'pdf_exporter': self.pdf_exporter,
             'job_logger': self.job_logger,
-            'filename_sanitizer': processor.sanitize_filename,
+            'filename_sanitizer': self.video_processor.sanitize_filename,
             'auto_categorizer': self.auto_categorizer,
             'base_dir': self.base_dir
         }
@@ -181,43 +137,41 @@ class YouTubeStudyNotes:
                 subject=self.subject,
                 auto_categorize=self.auto_categorize,
                 generate_assessment=self.generate_assessments,
-                export_pdf=self.export_pdfs,
-                worker_id=worker_id
+                export_pdf=self.export_pdf,
+                worker_id=None
             )
 
             # Update components with detected subject (if categorized)
             if final_state.get('detected_subject'):
                 detected_subject = final_state['detected_subject']
-                with self._kg_lock:
-                    self.knowledge_graph = KnowledgeGraph(self.base_dir, detected_subject, self.global_context)
-                    self.obsidian_linker = ObsidianLinker(self.base_dir, detected_subject, self.global_context)
+                self.knowledge_graph = KnowledgeGraph(self.base_dir, detected_subject, self.global_context)
+                self.obsidian_linker = ObsidianLinker(self.base_dir, detected_subject, self.global_context)
 
-            # Update knowledge graph cache (thread-safe)
-            with self._kg_lock:
-                self.knowledge_graph.refresh_cache()
+            # Update knowledge graph cache
+            self.knowledge_graph.refresh_cache()
 
-            # Convert state to ProcessingResult
-            return ProcessingResult(
-                url=final_state['url'],
-                video_id=final_state['video_id'],
-                success=final_state.get('completed', False),
-                title=final_state.get('video_title'),
-                filepath=final_state.get('notes_file_path'),
-                duration_seconds=final_state.get('processing_duration'),
-                method=final_state.get('transcript_data', {}).get('method', 'tor') if final_state.get('transcript_data') else 'unknown'
-            )
+            # Convert state to result dictionary
+            return {
+                'url': final_state['url'],
+                'video_id': final_state['video_id'],
+                'success': final_state.get('completed', False),
+                'title': final_state.get('video_title'),
+                'filepath': final_state.get('notes_file_path'),
+                'duration_seconds': final_state.get('processing_duration'),
+                'method': final_state.get('transcript_data', {}).get('method', 'tor') if final_state.get('transcript_data') else 'unknown'
+            }
 
         except Exception as e:
             logger.error(f"\nERROR processing {url}: {e}")
 
             # Job was already logged by pipeline, just return failure
-            return ProcessingResult(
-                url=url,
-                video_id=video_id,
-                success=False,
-                error=str(e),
-                duration_seconds=job.processing_duration if hasattr(job, 'processing_duration') else 0
-            )
+            return {
+                'url': url,
+                'video_id': video_id,
+                'success': False,
+                'error': str(e),
+                'duration_seconds': 0
+            }
 
     def _handle_rate_limit_error(self, e):
         """Handle rate limit errors with helpful message."""
@@ -234,7 +188,7 @@ class YouTubeStudyNotes:
             logger.info("3. Ensure Tor proxy is running: docker-compose up -d tor-proxy")
 
     def process_urls(self, urls):
-        """Process a list of URLs (sequential or parallel)."""
+        """Process a list of URLs sequentially."""
         if not urls:
             logger.info("No URLs provided")
             return
@@ -243,44 +197,25 @@ class YouTubeStudyNotes:
         if not self.notes_generator.is_ready():
             return
 
-        logger.debug(f"\nProcessing {len(urls)} URL(s)...")
+        logger.debug(f"\nProcessing {len(urls)} URL(s) sequentially...")
         if self.subject:
             logger.info(f"Subject: {self.subject}")
             logger.info(f"Cross-reference scope: {'Subject-only' if not self.global_context else 'Global'}")
 
-        # UNIFIED PROCESSING PATH: Single code path for both sequential and parallel modes
-        if self.parallel and self.tor_coordinator:
-            # Parallel mode with Tor coordinator - synchronized access to single Tor daemon
-            def process_with_coordinator_worker(url, worker_id):
-                """Process URL using Tor fetcher from coordinator."""
-                with self.tor_coordinator.acquire(worker_id=worker_id) as tor_fetcher:
-                    return self.process_single_url(url, worker_id=worker_id, tor_fetcher=tor_fetcher)
+        # Process each URL sequentially
+        results = []
+        for i, url in enumerate(urls, 1):
+            logger.info(f"\n[{i}/{len(urls)}] Processing: {url}")
+            result = self.process_single_url(url)
+            results.append(result)
 
-            results = self.parallel_processor.process_videos_parallel(
-                urls,
-                process_with_coordinator_worker,
-                worker_factory=None  # Don't create per-worker processors
-            )
-        else:
-            # Sequential mode or parallel without pool - use worker factory
-            def video_processor_factory():
-                """Create a new VideoProcessor instance for a worker thread."""
-                return VideoProcessor("tor")
+            # Add delay between videos to avoid rate limiting
+            if i < len(urls):
+                import time
+                time.sleep(3.0)
 
-            results = self.parallel_processor.process_videos_parallel(
-                urls,
-                self.process_single_url,
-                worker_factory=video_processor_factory
-            )
-
-        # Collect metrics
-        for result in results:
-            self.metrics.add_result(result)
-
-        # Show statistics
-        self.metrics.print_summary()
-
-        successful = sum(1 for r in results if r.success)
+        # Show summary
+        successful = sum(1 for r in results if r['success'])
         logger.info(f"\n{'='*50}")
         logger.success(f"COMPLETE: {successful}/{len(urls)} URL(s) processed successfully")
         logger.info(f"Output saved to: {self.output_dir}/")
@@ -303,16 +238,14 @@ def show_help():
 YouTube Study Buddy - Transform YouTube videos into AI-powered study notes
 
 Usage:
-  youtube-study-buddy <url1> <url2> ...                    # Process URLs sequentially
-  youtube-study-buddy --parallel --file urls.txt           # Process URLs in parallel
-  youtube-study-buddy --workers 5 -p --file urls.txt      # Parallel with 5 workers
+  youtube-study-buddy <url1> <url2> ...                    # Process URLs
+  youtube-study-buddy --file urls.txt                      # Process URLs from file
+  youtube-study-buddy --subject "Machine Learning" <url>   # With subject organization
 
 Options:
   --subject <name>         Organize notes by subject (creates notes/<subject>/ folder)
   --subject-only           Cross-reference only within the specified subject (default: global)
   --file <filename>        Read URLs from file (one per line)
-  --parallel, -p           Enable parallel processing (faster for batches)
-  --workers, -w <num>      Number of parallel workers (default: 3, max: 10)
   --no-assessments         Disable assessment generation
   --no-auto-categorize     Disable auto-categorization
   --export-pdf             Export notes to PDF with Obsidian-style formatting
@@ -320,14 +253,11 @@ Options:
   --help, -h               Show this help message
 
 Examples:
-  # Sequential processing
+  # Process a single video
   youtube-study-buddy https://youtube.com/watch?v=xyz
 
-  # Parallel processing (3 workers)
-  youtube-study-buddy --parallel --file playlist.txt
-
-  # Parallel with 5 workers
-  youtube-study-buddy -p -w 5 --file large-playlist.txt
+  # Process multiple videos from file
+  youtube-study-buddy --file urls.txt
 
   # With subject organization
   youtube-study-buddy --subject "Machine Learning" https://youtube.com/watch?v=xyz
@@ -339,14 +269,12 @@ Examples:
   youtube-study-buddy --export-pdf --pdf-theme academic --file urls.txt
 
 Performance:
-  Sequential: ~60s per video
-  Parallel (3 workers): ~25s per video (2.5x faster)
-  Parallel (5 workers): ~20s per video (3x faster, higher rate limit risk)
+  Processing time: ~60s per video (depends on video length and transcript complexity)
 
 Playlist Extraction:
   # Extract URLs from a YouTube playlist using yt-dlp
   yt-dlp --flat-playlist --print url "PLAYLIST_URL" > urls.txt
-  youtube-study-buddy --parallel --file urls.txt
+  youtube-study-buddy --file urls.txt
 
 Requirements:
   - Claude API key (set CLAUDE_API_KEY or ANTHROPIC_API_KEY environment variable)
@@ -377,8 +305,6 @@ def main():
     parser.add_argument('--subject', '-s', help='Subject for organizing notes')
     parser.add_argument('--subject-only', action='store_true', help='Cross-reference only within subject')
     parser.add_argument('--file', '-f', help='Read URLs from file (one per line)')
-    parser.add_argument('--parallel', '-p', action='store_true', help='Enable parallel processing of videos')
-    parser.add_argument('--workers', '-w', type=int, default=3, help='Number of parallel workers (default: 3)')
     parser.add_argument('--no-assessments', action='store_true', help='Disable assessment generation')
     parser.add_argument('--no-auto-categorize', action='store_true', help='Disable auto-categorization')
     parser.add_argument('--export-pdf', action='store_true', help='Export notes to PDF (requires: uv pip install weasyprint markdown2)')
@@ -408,8 +334,6 @@ def main():
         global_context=not args.subject_only,
         generate_assessments=not args.no_assessments,
         auto_categorize=not args.no_auto_categorize,
-        parallel=args.parallel,
-        max_workers=args.workers,
         export_pdf=args.export_pdf,
         pdf_theme=args.pdf_theme
     )
