@@ -37,7 +37,7 @@ def initialize_session_state():
         st.session_state.show_quick_start = True
 
 
-def create_processor(subject, global_context, generate_assessments=True, auto_categorize=True, base_dir="notes", parallel=False, max_workers=3, export_pdf=False, pdf_theme='obsidian'):
+def create_processor(subject, global_context, generate_assessments=True, auto_categorize=True, base_dir="notes", export_pdf=False, pdf_theme='obsidian'):
     """Create or update the YouTube processor based on settings."""
     return create_interface(
         subject=subject if subject else None,
@@ -45,8 +45,6 @@ def create_processor(subject, global_context, generate_assessments=True, auto_ca
         base_dir=base_dir,
         generate_assessments=generate_assessments,
         auto_categorize=auto_categorize,
-        parallel=parallel,
-        max_workers=max_workers,
         export_pdf=export_pdf,
         pdf_theme=pdf_theme
     )

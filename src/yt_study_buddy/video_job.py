@@ -397,28 +397,3 @@ def create_job_from_url(url: str, video_id: str, subject: Optional[str] = None,
         worker_id=worker_id,
         stage=ProcessingStage.CREATED
     )
-
-
-def create_job_batch(urls: List[str], subject: Optional[str] = None) -> List[VideoProcessingJob]:
-    """
-    Create a batch of jobs from URLs.
-
-    Args:
-        urls: List of YouTube URLs
-        subject: Subject category for all videos
-
-    Returns:
-        List of VideoProcessingJob instances
-    """
-    from .video_processor import VideoProcessor
-
-    jobs = []
-    processor = VideoProcessor("tor")
-
-    for i, url in enumerate(urls):
-        video_id = processor.get_video_id(url)
-        if video_id:
-            job = create_job_from_url(url, video_id, subject, worker_id=i)
-            jobs.append(job)
-
-    return jobs
