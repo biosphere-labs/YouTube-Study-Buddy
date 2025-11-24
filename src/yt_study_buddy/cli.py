@@ -349,10 +349,10 @@ def main():
     # Enable debug logging if requested
     if args.debug_logging:
         from .debug_logger import enable_debug_logging
-        logger = enable_debug_logging()
-        logger.success(f"✓ Debug logging enabled")
-        logger.info(f"  Session log: {logger.session_log}")
-        logger.info(f"  API log: {logger.api_log}")
+        debug_logger = enable_debug_logging()
+        debug_logger.success(f"✓ Debug logging enabled")
+        debug_logger.info(f"  Session log: {debug_logger.session_log}")
+        debug_logger.info(f"  API log: {debug_logger.api_log}")
 
     # Determine proxy usage: CLI flag takes precedence over environment variable
     use_proxy = True  # Default to Tor proxy for safety
@@ -398,8 +398,8 @@ def main():
     if args.debug_logging:
         logger.info("\n" + "="*60)
         from .debug_logger import get_logger
-        debug_logger = get_logger()
-        debug_logger.analyze_logs()
+        final_debug_logger = get_logger()
+        final_debug_logger.analyze_logs()
 
 
 if __name__ == "__main__":
