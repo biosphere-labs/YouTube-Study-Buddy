@@ -268,16 +268,17 @@ class DirectTranscriptProvider(AbstractTranscriptProvider):
             # Add small random delay to avoid appearing automated
             time.sleep(random.uniform(0.5, 1.5))
 
-            # Fetch transcript directly
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+            # Fetch transcript directly using instance-based API
+            api = YouTubeTranscriptApi()
+            transcript_data = api.fetch(video_id, languages=['en'])
 
-            # Format transcript text
-            transcript_text = ' '.join([entry['text'] for entry in transcript_list])
+            # Format transcript text from snippets
+            transcript_text = ' '.join([snippet.text for snippet in transcript_data.snippets])
 
             self.stats['direct_success'] += 1
 
             return {
-                'text': transcript_text,
+                'transcript': transcript_text,
                 'length': len(transcript_text),
                 'method': 'direct',
                 'video_id': video_id

@@ -78,7 +78,6 @@ def create_workflow(components: dict) -> StateGraph:
     # Bind components to nodes using partial
     categorize_fn = partial(
         categorize_node,
-        video_processor=components['video_processor'],
         auto_categorizer=components.get('auto_categorizer'),
         base_dir=components.get('base_dir', 'notes')
     )
@@ -129,21 +128,21 @@ def create_workflow(components: dict) -> StateGraph:
     workflow.add_node("log_job", log_job_fn)
 
     # Define workflow structure
-    # Start with conditional: Should we categorize?
-    workflow.set_conditional_entry_point(
+    # Start by fetching transcript - always needed
+    workflow.set_entry_point("fetch_transcript")
+
+    # After fetch, conditionally categorize if needed
+    workflow.add_conditional_edges(
+        "fetch_transcript",
         should_categorize,
         {
             "categorize": "categorize",
-            "skip_categorize": "fetch_transcript"
+            "skip_categorize": "generate_notes"
         }
     )
 
-    # After categorization completes, fetch transcript
-    # (Note: categorize node may have already fetched, fetch_transcript will skip)
-    workflow.add_edge("categorize", "fetch_transcript")
-
-    # After fetch, generate notes
-    workflow.add_edge("fetch_transcript", "generate_notes")
+    # After categorization, generate notes
+    workflow.add_edge("categorize", "generate_notes")
 
     # Conditional: Should we generate assessment?
     workflow.add_conditional_edges(

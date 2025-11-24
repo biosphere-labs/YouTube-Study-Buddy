@@ -16,34 +16,22 @@ from .auto_categorizer import AutoCategorizer
 
 def categorize_node(
     state: VideoProcessingState,
-    video_processor,
     auto_categorizer: AutoCategorizer,
     base_dir: str
 ) -> VideoProcessingState:
     """
     Auto-categorize video based on transcript and title.
 
-    This node fetches the transcript/title if needed and determines the subject.
+    Expects transcript and title to already be fetched by fetch_transcript_node.
     """
     logger.info("🔍 Auto-categorizing video content...")
 
     try:
-        # Fetch transcript and title if not already fetched
-        if not state.get('transcript'):
-            logger.info("  Fetching transcript for categorization...")
-            transcript_data = video_processor.get_transcript(state['video_id'])
-            state['transcript'] = transcript_data['transcript']
-            state['transcript_data'] = transcript_data
+        # Validate that transcript and title exist (should already be fetched)
+        if not state.get('transcript') or not state.get('video_title'):
+            raise ValueError("Transcript and title must be fetched before categorization")
 
-            logger.info("  Fetching title for categorization...")
-            video_title = video_processor.get_video_title(
-                state['video_id'],
-                worker_id=state.get('worker_id')
-            )
-            state['video_title'] = video_title
-            state['needs_ai_title'] = video_title.startswith("Video_")
-
-        # Categorize
+        # Categorize using already-fetched data
         detected_subject = auto_categorizer.categorize_video(
             state['transcript'],
             state['video_title'],
@@ -225,7 +213,6 @@ def write_files_node(
     """
     Write markdown files to disk.
     """
-    import os
     from pathlib import Path
 
     stage_start = time.time()
@@ -312,7 +299,6 @@ def export_pdf_node(
     """
     Export markdown to PDF.
     """
-    import os
     from pathlib import Path
 
     stage_start = time.time()
@@ -364,7 +350,7 @@ def log_job_node(
     try:
         # Convert state back to VideoProcessingJob for logging
         # (We can refactor job_logger later to accept state directly)
-        from .video_job import VideoProcessingJob, ProcessingStage
+        from .video_job import VideoProcessingJob
 
         job = VideoProcessingJob(
             url=state['url'],
