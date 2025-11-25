@@ -18,9 +18,16 @@ from youtube_transcript_api.proxies import GenericProxyConfig
 
 from .ytdlp_fallback import YtDlpFallback
 from .debug_logger import get_logger
-from .exit_node_tracker import get_tracker
-from .daily_exit_tracker import get_daily_tracker
 from .error_classifier import simplify_error
+
+# Import trackers from tor-proxy-middleware package (optional dependency)
+try:
+    from tor_proxy_middleware import get_tracker, get_daily_tracker
+    TOR_MIDDLEWARE_AVAILABLE = True
+except ImportError:
+    get_tracker = None
+    get_daily_tracker = None
+    TOR_MIDDLEWARE_AVAILABLE = False
 
 class TorTranscriptFetcher:
     """Fetch YouTube transcripts through Tor proxy to avoid IP blocks."""
@@ -55,8 +62,12 @@ class TorTranscriptFetcher:
         # Track if control port is available (set to False after first failure)
         self._control_port_available = True
 
-        # Daily exit node tracker
-        self.daily_tracker = get_daily_tracker()
+        # Daily exit node tracker (if available)
+        if TOR_MIDDLEWARE_AVAILABLE and get_daily_tracker:
+            self.daily_tracker = get_daily_tracker()
+        else:
+            self.daily_tracker = None
+            logger.warning("tor-proxy-middleware not installed. Exit IP tracking disabled.")
 
     def _record_attempt(self, video_id: str, attempt: int, success: bool, exit_ip: Optional[str] = None):
         """
@@ -78,12 +89,13 @@ class TorTranscriptFetcher:
             except:
                 exit_ip = "unknown"
 
-        self.daily_tracker.record_attempt(
-            exit_ip=exit_ip,
-            video_id=video_id,
-            attempt=attempt,
-            success=success
-        )
+        if self.daily_tracker:
+            self.daily_tracker.record_attempt(
+                exit_ip=exit_ip,
+                video_id=video_id,
+                attempt=attempt,
+                success=success
+            )
 
     def rotate_tor_circuit(self, max_retries: int = 3, retry_delay: float = 2.0, max_rotation_attempts: int = 5) -> bool:
         """
@@ -109,7 +121,7 @@ class TorTranscriptFetcher:
         def _do_rotation():
             """Inner function that performs the actual rotation."""
             # Get list of IPs that failed today
-            failed_ips = set(self.daily_tracker.get_failed_ips_today())
+            failed_ips = set(self.daily_tracker.get_failed_ips_today()) if self.daily_tracker else set()
             if failed_ips:
                 logger.debug(f"Avoiding {len(failed_ips)} failed IPs from today")
 
@@ -399,7 +411,8 @@ class TorTranscriptFetcher:
                     self._record_attempt(video_id, attempt + 1, success=True, exit_ip=None)
 
                 # Save tracker after successful fetch
-                self.daily_tracker.save()
+                if self.daily_tracker:
+                    self.daily_tracker.save()
 
                 return {
                     'transcript': transcript_text,
@@ -428,7 +441,8 @@ class TorTranscriptFetcher:
             logger.error(f"Failed to fetch via Tor: {simplified_final}")
 
         # Save tracker after all attempts exhausted
-        self.daily_tracker.save()
+        if self.daily_tracker:
+            self.daily_tracker.save()
 
         return None
 
