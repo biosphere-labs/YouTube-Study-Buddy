@@ -189,14 +189,14 @@ class DebugLogger:
         success: bool,
         worker_id: Optional[int] = None
     ):
-        """Log Tor circuit rotation."""
+        """Log proxy circuit rotation."""
         if not self.enabled:
             return
 
         worker_label = f"Worker-{worker_id}" if worker_id is not None else "Main"
         status = "SUCCESS" if success else "FAILED"
         self.debug(
-            f"[{worker_label}] Tor circuit rotation for connection #{connection_id}: {status}"
+            f"[{worker_label}] Proxy circuit rotation for connection #{connection_id}: {status}"
         )
 
     def log_exit_ip(
@@ -206,7 +206,7 @@ class DebugLogger:
         unique: bool,
         worker_id: Optional[int] = None
     ):
-        """Log Tor exit IP."""
+        """Log proxy exit IP."""
         if not self.enabled:
             return
 

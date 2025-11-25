@@ -42,7 +42,7 @@ This repository contains the **open-source CLI package** for self-hosted use. A 
 - 🏷️ **Auto-Categorization** - ML-based subject detection
 - 📊 **Knowledge Graph** - Cross-reference related concepts
 - 📄 **PDF Export** - Multiple themes (Obsidian, Academic, Minimal)
-- 🌐 **Flexible Proxy Options** - Choose Tor proxy (default) or direct connection for low-volume use
+- 🌐 **Flexible Proxy Options** - Choose SOCKS proxy (default) or direct connection for low-volume use
 
 **[Technical Details](docs/TECHNICAL_DETAILS.md)** - LangGraph workflow, Docker setup, development guide
 

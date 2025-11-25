@@ -154,8 +154,8 @@ class ErrorClassifier:
 
         # Map summaries to solutions
         solutions = {
-            "YouTube blocked exit IP": "Rotate Tor circuit or wait 5 minutes",
-            "Exit IP from blocked cloud provider": "Rotate Tor to get residential IP",
+            "YouTube blocked exit IP": "Rotate proxy circuit or wait 5 minutes",
+            "Exit IP from blocked cloud provider": "Rotate proxy to get residential IP",
             "Rate limit exceeded": "Wait 5-10 minutes before retrying",
             "Video has no subtitles": "Video doesn't have transcripts",
             "No transcripts available": "Creator didn't enable transcripts",

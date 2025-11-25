@@ -30,7 +30,7 @@ def fetch_transcript_and_title(
 
     Args:
         job: VideoProcessingJob to process
-        video_processor: VideoProcessor instance (with Tor)
+        video_processor: VideoProcessor instance
         worker_id: Optional worker ID for logging
 
     Returns:
@@ -50,7 +50,7 @@ def fetch_transcript_and_title(
         transcript_data = video_processor.get_transcript(job.video_id)
 
         if not transcript_data:
-            raise ValueError("Could not get transcript: Both Tor and yt-dlp fallback failed")
+            raise ValueError("Could not get transcript: Both proxy and yt-dlp fallback failed")
 
         job.transcript = transcript_data['transcript']
         job.transcript_data = transcript_data
