@@ -43,6 +43,14 @@ dev = [
     "black>=23.0.0",
     "flake8>=6.0.0",
 ]
+local = [
+    "tor-proxy-middleware",
+    "claude-headless-subscription",
+]
+
+[tool.uv.sources]
+tor-proxy-middleware = { path = "../../tor-proxy-middleware-workspace/tor-proxy-middleware", editable = true }
+claude-headless-subscription = { path = "../../../claude-langgraph-headless/python", editable = true }
 
 [project.scripts]
 youtube-study-buddy = "yt_study_buddy.cli:main"

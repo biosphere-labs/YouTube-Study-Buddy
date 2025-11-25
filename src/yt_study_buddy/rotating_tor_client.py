@@ -10,7 +10,14 @@ from typing import Optional, Dict, Any
 from stem import Signal
 from stem.control import Controller
 
-from .exit_node_tracker import get_tracker
+# Import tracker from tor-proxy-middleware package (optional dependency)
+try:
+    from tor_proxy_middleware import get_tracker
+    TOR_MIDDLEWARE_AVAILABLE = True
+except ImportError:
+    get_tracker = None
+    TOR_MIDDLEWARE_AVAILABLE = False
+
 from loguru import logger
 
 
@@ -64,8 +71,12 @@ class RotatingTorClient:
         self.cooldown_hours = cooldown_hours
         self.max_rotation_attempts = max_rotation_attempts
 
-        # Initialize exit node tracker with 24-hour cooldown
-        self.tracker = get_tracker(cooldown_hours=cooldown_hours)
+        # Initialize exit node tracker with 24-hour cooldown (if available)
+        if TOR_MIDDLEWARE_AVAILABLE and get_tracker:
+            self.tracker = get_tracker(cooldown_hours=cooldown_hours)
+        else:
+            self.tracker = None
+            logger.warning("tor-proxy-middleware not installed. Exit IP tracking disabled.")
 
         # Create requests session configured for Tor
         self.session = requests.Session()
@@ -138,6 +149,12 @@ class RotatingTorClient:
         for attempt in range(self.max_rotation_attempts):
             # Get current exit IP
             exit_ip = self._get_exit_ip()
+
+            # If tracker not available, just use the current IP
+            if self.tracker is None:
+                self.current_exit_ip = exit_ip
+                logger.success(f"✓ Using exit IP: {exit_ip} (tracking disabled)")
+                return exit_ip
 
             # Check if IP is available (not in cooldown)
             if not force_rotation and self.tracker.is_available(exit_ip):
@@ -252,11 +269,11 @@ class RotatingTorClient:
         except Exception:
             current_ip = None
 
-        tracker_stats = self.tracker.get_stats()
+        tracker_stats = self.tracker.get_stats() if self.tracker else {}
 
         return {
             'current_exit_ip': current_ip,
-            'exit_ip_fresh': self.tracker.is_available(current_ip) if current_ip else False,
+            'exit_ip_fresh': self.tracker.is_available(current_ip) if (self.tracker and current_ip) else False,
             'cooldown_hours': self.cooldown_hours,
             'tracker_stats': tracker_stats
         }

@@ -356,6 +356,19 @@ wheels = [
 ]
 
 [[package]]
+name = "claude-headless-subscription"
+version = "1.0.0"
+source = { editable = "../../../claude-langgraph-headless/python" }
+
+[package.metadata]
+requires-dist = [
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
+    { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.1.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "click"
 version = "8.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3106,6 +3119,30 @@ wheels = [
 ]
 
 [[package]]
+name = "tor-proxy-middleware"
+version = "0.1.0"
+source = { editable = "../../tor-proxy-middleware-workspace/tor-proxy-middleware" }
+dependencies = [
+    { name = "loguru" },
+    { name = "pysocks" },
+    { name = "requests" },
+    { name = "stem" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "loguru", specifier = ">=0.7.0" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "pysocks", specifier = ">=1.7.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
+    { name = "requests", specifier = ">=2.31.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "stem", specifier = ">=1.8.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "torch"
 version = "2.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3473,11 +3510,16 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-mock" },
 ]
+local = [
+    { name = "claude-headless-subscription" },
+    { name = "tor-proxy-middleware" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=0.25.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
+    { name = "claude-headless-subscription", marker = "extra == 'local'", editable = "../../../claude-langgraph-headless/python" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "fuzzywuzzy", specifier = ">=0.18.0" },
     { name = "ipykernel", specifier = ">=6.0.0" },
@@ -3502,12 +3544,13 @@ requires-dist = [
     { name = "sentence-transformers", specifier = ">=2.2.0" },
     { name = "stem", specifier = ">=1.8.0" },
     { name = "streamlit", specifier = ">=1.0.0" },
+    { name = "tor-proxy-middleware", marker = "extra == 'local'", editable = "../../tor-proxy-middleware-workspace/tor-proxy-middleware" },
     { name = "urllib3", specifier = ">=2.0.0" },
     { name = "weasyprint", specifier = ">=60.0" },
     { name = "youtube-transcript-api", specifier = ">=0.6.2" },
     { name = "yt-dlp", specifier = ">=2025.9.26" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "local"]
 
 [[package]]
 name = "youtube-transcript-api"
