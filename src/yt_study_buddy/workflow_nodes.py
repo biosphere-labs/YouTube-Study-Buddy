@@ -75,7 +75,7 @@ def fetch_transcript_node(
         transcript_data = video_processor.get_transcript(state['video_id'])
 
         if not transcript_data:
-            raise ValueError("Could not get transcript: Both Tor and yt-dlp fallback failed")
+            raise ValueError("Could not get transcript: Both proxy and yt-dlp fallback failed")
 
         state['transcript'] = transcript_data['transcript']
         state['transcript_data'] = transcript_data

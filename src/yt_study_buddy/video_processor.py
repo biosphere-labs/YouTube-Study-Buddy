@@ -1,6 +1,6 @@
 """
 Video processing utilities for YouTube transcript and metadata extraction.
-Supports both Tor proxy and direct connections based on user preference.
+Supports both proxy and direct connections based on user preference.
 """
 import re
 from typing import Optional
@@ -10,17 +10,17 @@ from loguru import logger
 
 
 class VideoProcessor:
-    """Handles YouTube video processing using Tor-based transcript provider."""
+    """Handles YouTube video processing using transcript provider."""
 
-    def __init__(self, provider_type: str = "tor", **provider_kwargs):
+    def __init__(self, provider_type: str = "proxy", **provider_kwargs):
         """
         Initialize with specified transcript provider.
 
         Args:
-            provider_type: "tor" (default) or "direct"
-                - "tor": Uses Tor proxy, recommended for high-volume use
+            provider_type: "proxy" (default) or "direct"
+                - "proxy": Uses SOCKS proxy, recommended for high-volume use
                 - "direct": Direct connection, for low-volume use (<50 videos/day)
-            **provider_kwargs: Additional arguments passed to provider (e.g., tor_host, tor_port)
+            **provider_kwargs: Additional arguments passed to provider (e.g., proxy_host, proxy_port)
         """
         self.provider: TranscriptProvider = create_transcript_provider(provider_type, **provider_kwargs)
         self.provider_type = provider_type
@@ -46,17 +46,17 @@ class VideoProcessor:
         return self.provider.get_video_title(video_id)
 
     def get_transcript(self, video_id: str) -> dict:
-        """Get transcript using configured provider (Tor or direct)."""
+        """Get transcript using configured provider (proxy or direct)."""
         try:
-            if self.provider_type == "tor":
-                logger.info(f"  Using Tor provider...")
+            if self.provider_type == "proxy":
+                logger.info(f"  Using proxy provider...")
             else:
                 logger.info(f"  Using direct connection...")
             return self.provider.get_transcript(video_id)
         except Exception as e:
-            if self.provider_type == "tor":
-                logger.error(f"  Tor provider failed: {e}")
-                logger.info("  Make sure Tor proxy is running (docker-compose up -d tor-proxy)")
+            if self.provider_type == "proxy":
+                logger.error(f"  Proxy provider failed: {e}")
+                logger.info("  Make sure proxy is running and configured")
             else:
                 logger.error(f"  Direct connection failed: {e}")
             raise

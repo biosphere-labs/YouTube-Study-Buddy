@@ -47,8 +47,8 @@ class YouTubeStudyNotes:
         self.pdf_theme = pdf_theme
         self.use_proxy = use_proxy
 
-        # Use direct connection if --no-proxy, otherwise use Tor (default)
-        provider_type = "tor" if use_proxy else "direct"
+        # Use direct connection if --no-proxy, otherwise use proxy (default)
+        provider_type = "proxy" if use_proxy else "direct"
         self.video_processor = VideoProcessor(provider_type)
         self.knowledge_graph = KnowledgeGraph(base_dir, subject, global_context)
         self.notes_generator = StudyNotesGenerator()
@@ -161,7 +161,7 @@ class YouTubeStudyNotes:
                 'title': final_state.get('video_title'),
                 'filepath': final_state.get('notes_file_path'),
                 'duration_seconds': final_state.get('processing_duration'),
-                'method': final_state.get('transcript_data', {}).get('method', 'tor') if final_state.get('transcript_data') else 'unknown'
+                'method': final_state.get('transcript_data', {}).get('method', 'proxy') if final_state.get('transcript_data') else 'unknown'
             }
 
         except Exception as e:
@@ -184,18 +184,18 @@ class YouTubeStudyNotes:
             logger.info("1. Wait 15-30 minutes before trying again")
             logger.info("2. Process fewer videos at once")
             if not self.use_proxy:
-                logger.info("3. Remove --no-proxy flag to use Tor proxy (bypasses IP blocks)")
-                logger.info("4. Run: docker-compose up -d tor-proxy")
+                logger.info("3. Remove --no-proxy flag to use proxy (bypasses IP blocks)")
+                logger.info("4. Ensure proxy is running")
             else:
-                logger.info("3. Ensure Tor proxy is running: docker-compose up -d tor-proxy")
+                logger.info("3. Ensure proxy is running and configured")
         else:
             logger.info("\nTroubleshooting:")
             logger.info("1. Check if the video has captions/subtitles enabled")
             logger.info("2. Some videos restrict transcript access")
             if not self.use_proxy:
-                logger.info("3. Try removing --no-proxy flag to use Tor proxy")
+                logger.info("3. Try removing --no-proxy flag to use proxy")
             else:
-                logger.info("3. Ensure Tor proxy is running: docker-compose up -d tor-proxy")
+                logger.info("3. Ensure proxy is running and configured")
 
     def process_urls(self, urls):
         """Process a list of URLs sequentially."""
@@ -260,7 +260,7 @@ Options:
   --no-auto-categorize     Disable auto-categorization
   --export-pdf             Export notes to PDF with Obsidian-style formatting
   --pdf-theme <theme>      PDF theme: default, obsidian, academic, minimal (default: obsidian)
-  --no-proxy               Use direct IP connection instead of Tor (for <50 videos/day from residential IPs)
+  --no-proxy               Use direct IP connection instead of proxy (for <50 videos/day from residential IPs)
   --help, -h               Show this help message
 
 Examples:
@@ -286,7 +286,7 @@ Performance:
   Processing time: ~60s per video (depends on video length and transcript complexity)
 
 Rate Limiting & Proxy Usage:
-  By default, Tor proxy is used to avoid YouTube's IP-based rate limits.
+  By default, a SOCKS proxy is used to avoid YouTube's IP-based rate limits.
   Use --no-proxy for:
     - Low-volume use (<50 videos/day from residential IPs)
     - Development/testing
@@ -294,8 +294,8 @@ Rate Limiting & Proxy Usage:
 
   If you hit rate limits with --no-proxy:
     - Wait 15-30 minutes before retrying
-    - Remove --no-proxy flag to use Tor proxy
-    - Run: docker-compose up -d tor-proxy
+    - Remove --no-proxy flag to use proxy
+    - Ensure proxy is configured and running
 
 Playlist Extraction:
   # Extract URLs from a YouTube playlist using yt-dlp
@@ -305,7 +305,7 @@ Playlist Extraction:
 Requirements:
   - Claude API key (set CLAUDE_API_KEY or ANTHROPIC_API_KEY environment variable)
     Get it from: https://console.anthropic.com/
-  - Tor proxy running: docker-compose up -d tor-proxy
+  - Optional: SOCKS proxy for high-volume use (install tor-proxy-middleware for best results)
 
 Output:
   - Notes saved in notes/<subject>/ folders
@@ -321,7 +321,7 @@ def main():
     print("""
 ========================================
    YouTube to Study Notes Tool
-   Tor-based Transcript + Claude AI
+   Transcript + Claude AI
 ========================================
     """)
 
@@ -336,7 +336,7 @@ def main():
     parser.add_argument('--export-pdf', action='store_true', help='Export notes to PDF (requires: uv pip install weasyprint markdown2)')
     parser.add_argument('--pdf-theme', default='obsidian', choices=['default', 'obsidian', 'academic', 'minimal'],
                        help='PDF theme style (default: obsidian)')
-    parser.add_argument('--no-proxy', action='store_true', help='Use direct IP connection instead of Tor (for <50 videos/day from residential IPs)')
+    parser.add_argument('--no-proxy', action='store_true', help='Use direct IP connection instead of proxy (for <50 videos/day from residential IPs)')
     parser.add_argument('--debug-logging', action='store_true', help='Enable detailed debug logging to debug_logs/ directory')
     parser.add_argument('--help', '-h', action='store_true', help='Show help message')
 

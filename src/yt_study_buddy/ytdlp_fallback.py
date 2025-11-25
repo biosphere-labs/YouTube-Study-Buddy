@@ -1,7 +1,7 @@
 """
 YT-DLP fallback for transcript fetching.
 
-Used when Tor-based fetching fails due to IP blocking or other issues.
+Used when proxy-based fetching fails due to IP blocking or other issues.
 """
 import re
 from typing import Optional, List, Dict, Any
