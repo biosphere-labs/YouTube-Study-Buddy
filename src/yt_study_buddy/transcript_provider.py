@@ -11,10 +11,9 @@ import time
 from abc import ABC, abstractmethod
 from typing import Protocol, Dict, Any, Optional
 
-import requests
 from loguru import logger
 
-from .transcript_fetcher import TranscriptFetcher, create_transcript_fetcher, PROXY_MIDDLEWARE_AVAILABLE
+from .transcript_fetcher import create_transcript_fetcher
 
 
 class TranscriptProvider(Protocol):
@@ -245,10 +244,6 @@ class ProxyTranscriptProvider(AbstractTranscriptProvider):
         logger.info("="*50)
 
 
-# Backwards compatibility alias
-TorTranscriptProvider = ProxyTranscriptProvider
-
-
 class DirectTranscriptProvider(AbstractTranscriptProvider):
     """
     Direct transcript provider - fetches transcripts without proxy.
@@ -355,12 +350,11 @@ def create_transcript_provider(provider_type: str = "proxy", **kwargs) -> Transc
     Factory function that returns a TranscriptProvider.
 
     Args:
-        provider_type: Type of provider ('proxy', 'tor', or 'direct')
+        provider_type: Type of provider ('proxy' or 'direct')
             - 'proxy' (default): Uses SOCKS proxy, recommended for high-volume use
-            - 'tor': Alias for 'proxy' (backwards compatibility)
             - 'direct': Direct connection, for low-volume use (<50 videos/day)
         **kwargs: Additional arguments passed to provider constructor
-            For 'proxy'/'tor':
+            For 'proxy':
                 - proxy_host: Proxy host (default: '127.0.0.1')
                 - proxy_port: Proxy port (default: 9050)
             For 'direct': no additional arguments
@@ -368,16 +362,6 @@ def create_transcript_provider(provider_type: str = "proxy", **kwargs) -> Transc
     Returns:
         TranscriptProvider instance (ProxyTranscriptProvider or DirectTranscriptProvider)
     """
-    # Handle legacy 'tor' type
-    if provider_type == "tor":
-        provider_type = "proxy"
-
-    # Map kwargs for backwards compatibility
-    if 'tor_host' in kwargs and 'proxy_host' not in kwargs:
-        kwargs['proxy_host'] = kwargs.pop('tor_host')
-    if 'tor_port' in kwargs and 'proxy_port' not in kwargs:
-        kwargs['proxy_port'] = kwargs.pop('tor_port')
-
     if provider_type == "proxy":
         return ProxyTranscriptProvider(**kwargs)
     elif provider_type == "direct":
