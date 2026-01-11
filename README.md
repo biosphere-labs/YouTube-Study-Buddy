@@ -2,8 +2,6 @@
 
 Learning from educational YouTube videos and want to maximize retention? **YT Study Buddy** transforms passive video watching into active learning by generating structured study notes with intelligent cross-referencing and targeted assessment questions. The system builds your personal knowledge graph over time, connecting concepts across videos, while quiz-style assessments test understanding beyond surface-level recall—turning scattered video content into an interconnected learning system that actually improves retention.
 
-This repository contains the **open-source CLI package** for self-hosted use. A managed web application will be available as a subscription service (launching mid-December 2025).
-
 ## 🧠 The Science: Active Learning vs Passive Watching
 
 **Traditional passive note-taking** often leads to the "illusion of competence" – where learners feel they understand content simply because they've transcribed it. YT Study Buddy implements research-backed learning principles:
@@ -15,24 +13,6 @@ This repository contains the **open-source CLI package** for self-hosted use. A 
 - **Spaced Retrieval Practice** – Separation of note generation from video watching enables spaced review
 
 **Result:** Instead of passive consumption, you get an active learning system with notes AND assessment questions that test understanding beyond surface-level recall.
-
-## 📦 Available Options
-
-### Open Source CLI (This Repository)
-- **Free and open source** - Self-hosted on your own infrastructure
-- Outputs Markdown files compatible with Obsidian for personal knowledge management
-- Includes Streamlit web interface (via Docker) for local browser-based processing
-- Full AI-powered note generation and assessments
-- Requires technical setup (Python, Claude API key)
-- Complete control over your data and processing
-- Ideal for developers, researchers, and self-hosters
-
-### Managed Web Application (Public Beta due to release 1 Feb 2026)
-- **Subscription-based service** - No setup required
-- Interactive assessments directly in the browser
-- MindMesh integration - browser-based knowledge graph visualization and navigation
-- Automatic updates and maintenance
-- Ideal for students and educators who want a ready-to-use solution
 
 ## Features
 
@@ -47,31 +27,6 @@ This repository contains the **open-source CLI package** for self-hosted use. A 
 **[Technical Details](docs/TECHNICAL_DETAILS.md)** - LangGraph workflow, Docker setup, development guide
 
 ## 🏗️ Architecture Overview
-
-The complete YouTube Study Buddy system is organized into **4 separate repositories** for modularity, scalability, and separation of concerns:
-
-1. **Core CLI Package** (This Repository - Open Source)
-   - Standalone command-line tool for local use
-   - Python package installable via pip/uv
-   - Can run in Docker or as a systemd service
-   - LangGraph-powered workflow with automatic checkpointing
-
-2. **Backend Package** (In Alpha QA)
-   - Service classes for video processing, notes generation, and user management
-   - Shared utilities for DynamoDB, S3, and authentication
-   - Monthly subscription management
-
-3. **Infrastructure** (In Alpha QA)
-   - AWS SAM (IaC)
-   - AWS Lambda function deployment
-   - DynamoDB, S3, API Gateway, CloudFront
-   - Serverless architecture for scalability
-
-4. **Web Application** (In Alpha QA)
-   - React application
-   - Interactive assessments that adapt based on your responses to facilitate deeper learning
-
-> **Note:** Only the CLI package (this repository) is open source. The managed web application, backend services, and infrastructure will be part of the subscription service launching mid-December 2025.
 
 ### Processing Workflow
 
