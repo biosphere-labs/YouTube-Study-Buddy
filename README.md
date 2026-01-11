@@ -27,7 +27,7 @@ This repository contains the **open-source CLI package** for self-hosted use. A 
 - Complete control over your data and processing
 - Ideal for developers, researchers, and self-hosters
 
-### Managed Web Application (Coming Mid-December 2025)
+### Managed Web Application (Public Beta due to release 1 Feb 2026)
 - **Subscription-based service** - No setup required
 - Interactive assessments directly in the browser
 - MindMesh integration - browser-based knowledge graph visualization and navigation
@@ -56,22 +56,19 @@ The complete YouTube Study Buddy system is organized into **4 separate repositor
    - Can run in Docker or as a systemd service
    - LangGraph-powered workflow with automatic checkpointing
 
-2. **Backend Package**
+2. **Backend Package** (In Alpha QA)
    - Service classes for video processing, notes generation, and user management
    - Shared utilities for DynamoDB, S3, and authentication
    - Monthly subscription management
-   - Python 3.12+ compatible for AWS Lambda deployment
 
-3. **Infrastructure**
-   - Terraform infrastructure as code (IaC)
+3. **Infrastructure** (In Alpha QA)
+   - AWS SAM (IaC)
    - AWS Lambda function deployment
-   - DynamoDB, S3, API Gateway, CloudFront, Cognito configuration
+   - DynamoDB, S3, API Gateway, CloudFront
    - Serverless architecture for scalability
 
-4. **Web Application** (In Development)
+4. **Web Application** (In Alpha QA)
    - React application
-   - Cognito authentication with Google sign-in
-   - Browser-based interface for subscription users
    - Interactive assessments that adapt based on your responses to facilitate deeper learning
 
 > **Note:** Only the CLI package (this repository) is open source. The managed web application, backend services, and infrastructure will be part of the subscription service launching mid-December 2025.
